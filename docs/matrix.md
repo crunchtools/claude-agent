@@ -14,8 +14,12 @@ land in the agent's own DM room.
 ## How it works
 
 The bridge long-polls `/sync` as the agent's Matrix user and acts only on
-senders in `CLAUDE_AGENT_MATRIX_ALLOW`, checked on the sender, never the room.
-It joins invites from the same senders.
+senders in `CLAUDE_AGENT_MATRIX_ALLOW`, checked on the sender, never the room,
+and only in a one-to-one room (the agent and that sender, nobody else), so
+nobody else reads the answers, checked when a text arrives and again before
+each answer. It joins invites from the same senders. It refuses to start with
+plain `http` to a homeserver on a public address, where the access token would
+cross the network unencrypted; `https`, loopback and private networks are fine.
 
 | Text | What happens |
 |------|--------------|
@@ -35,7 +39,7 @@ three minutes without one, and stops at a quarter hour.
 ## Example
 
 ```bash
-CLAUDE_AGENT_MATRIX_HOMESERVER=http://matrix.example.net:8008
+CLAUDE_AGENT_MATRIX_HOMESERVER=https://matrix.example.net
 CLAUDE_AGENT_MATRIX_TOKEN_FILE=/etc/claude-agent/matrix-token
 CLAUDE_AGENT_MATRIX_ALLOW=@alice:example.org
 claude-agent run -- --permission-mode acceptEdits

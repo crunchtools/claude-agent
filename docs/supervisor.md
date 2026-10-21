@@ -25,7 +25,9 @@ StopFailure, and busy from UserPromptSubmit.
 the running turn and its answer lost; a paste into an open dialog would answer
 it. Texts that arrive while the session is busy are held and pasted together,
 as one prompt, when the turn ends. Each paste is one bracketed paste and one
-Enter, so a multi-line text is one prompt.
+Enter, so a multi-line text is one prompt. At most 20 texts or 40,000
+characters wait; beyond that a text is refused until the turn ends or `stop`
+clears them.
 
 **What is never typed.** A text starting with `!` would run a shell command
 with no hook at all, and one starting with `/` would run a built-in such as

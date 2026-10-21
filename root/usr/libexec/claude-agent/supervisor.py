@@ -59,6 +59,9 @@ OUTPUT_CHARS = 1000
 SUMMARY_CHARS = 3000
 SCREEN_CHARS = 4000
 MAX_TEXT_CHARS = 20000
+# What may wait for a turn to end, in texts and in characters.
+MAX_HELD_TEXTS = 20
+MAX_HELD_CHARS = 40000
 MAX_COMMAND_CHARS = 520
 # sun_path is 108 bytes on Linux, its terminating NUL included.
 MAX_SOCKET_PATH = 107
@@ -242,6 +245,8 @@ class Supervisor:
         self.screen = b""
         self.confirm_until = 0.0
         self.answered: set[str] = set()
+        # Startup notices, replayed to each subscriber: one may connect later.
+        self.notices: list[dict] = []
         self.buffers: dict[socket.socket, bytes] = {}
         timeout = float(os.environ.get("CLAUDE_AGENT_RESULT_TIMEOUT", RESULT_TIMEOUT_SECONDS))
         self.results = Results(self.on_result, timeout)
@@ -306,7 +311,9 @@ class Supervisor:
         if "trust" in text and "folder" in text and "trust" not in self.answered:
             self.answered.add("trust")
             log("the working directory is not trusted yet; answer once with: claude-agent attach --rw")
-            self.emit({"event": "notice", "text": "The working directory is not trusted yet."})
+            notice = {"event": "notice", "text": "The working directory is not trusted yet."}
+            self.notices.append(notice)
+            self.emit(notice)
         if "Bypass" in text and "bypass" not in self.answered and "bypassPermissions" in self.argv:
             # Its default is "No, exit"; the mode was asked for on the command line.
             self.answered.add("bypass")
@@ -427,9 +434,11 @@ class Supervisor:
             self.write(ESCAPE)
             self.later(STOP_SETTLE_SECONDS, lambda: self.paste(text))
             return {"ok": True, "answered": True}
+        if len(self.held) >= MAX_HELD_TEXTS or sum(map(len, self.held)) + len(text) > MAX_HELD_CHARS:
+            return {"ok": False, "error": "too much is already waiting for this turn; /stop or wait"}
         self.held.append(text)
         self.drain()
-        return {"ok": True, "held": self.state != "idle" or bool(self.held)}
+        return {"ok": True, "held": bool(self.held)}
 
     def command(self, line: str) -> dict:
         line = " ".join(line.split())
@@ -476,9 +485,11 @@ class Supervisor:
         return {"ok": True, "state": self.state, "held": len(self.held), "dialog": self.dialog,
                 "session": self.session, "pid": self.pid}
 
-    def subscribe(self, client: socket.socket) -> dict:
+    def subscribe(self, client: socket.socket) -> None:
         self.subscribers.append(client)
-        return {"ok": True}
+        self.send_line(client, {"ok": True})
+        for notice in self.notices:
+            self.send_line(client, notice)
 
     def attach(self, client: socket.socket, rw: bool) -> None:
         self.attached[client] = rw

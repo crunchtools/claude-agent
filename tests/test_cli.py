@@ -57,6 +57,41 @@ class CliTest(unittest.TestCase):
                 if agent.poll() is None:
                     agent.kill()
 
+    def start(self, tmp: str, **extra: str) -> subprocess.Popen:
+        env = {"CLAUDE_AGENT_RUNTIME_DIR": tmp, "CLAUDE_AGENT_CLAUDE": str(FAKE), "FAKE_CLAUDE_DIR": tmp,
+               **extra}
+        agent = subprocess.Popen([sys.executable, str(CLI), "run"], env={**os.environ, **env},
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: agent.poll() is None and agent.kill())
+        deadline = time.time() + 10
+        while time.time() < deadline and "idle" not in run("status", env=env).stdout:
+            time.sleep(0.2)
+        return agent
+
+    def test_send_wait_waits_for_its_own_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"CLAUDE_AGENT_RUNTIME_DIR": tmp}
+            agent = self.start(tmp)
+            self.assertEqual(run("send", "slow 2", env=env).returncode, 0)
+            time.sleep(0.5)
+            result = run("send", "--wait", "mine", env=env)
+            self.assertEqual(result.stdout, "echo: mine\n")
+            run("send", "exit", env=env)
+            agent.wait(10)
+            agent.stderr.close()
+
+    def test_run_restarts_a_bridge_that_dies_and_stops_it_at_the_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # No token file: the bridge exits at once, every time.
+            agent = self.start(tmp, CLAUDE_AGENT_MATRIX_HOMESERVER="http://127.0.0.1:9",
+                               CLAUDE_AGENT_MATRIX_TOKEN_FILE=str(Path(tmp) / "missing"))
+            time.sleep(6.5)
+            run("send", "exit", env={"CLAUDE_AGENT_RUNTIME_DIR": tmp})
+            self.assertEqual(agent.wait(10), 3)
+            log = agent.stderr.read()
+            agent.stderr.close()
+            self.assertGreaterEqual(log.count("the Matrix bridge exited (1), restarting"), 1)
+
     def test_status_without_claude_exits_1(self) -> None:
         with tempfile.TemporaryDirectory() as empty:
             result = run("status", path=empty)

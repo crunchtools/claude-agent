@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import runpy
 import socket
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -20,6 +22,7 @@ ME = "@agent1:example.org"
 OWNER = "@alice:example.org"
 STRANGER = "@mallory:example.org"
 ROOM = "!dm:example.org"
+GROUP = "!group:example.org"
 
 
 def message(sender: str, body: str, room: str = ROOM) -> dict:
@@ -41,6 +44,7 @@ class FakeHomeserver:
         self.batches: queue.Queue[dict] = queue.Queue()
         self.requests: list[tuple[str, str, dict]] = []
         self.count = 0
+        self.members = {ROOM: [ME, OWNER], GROUP: [ME, OWNER, STRANGER]}
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -58,6 +62,13 @@ class FakeHomeserver:
             def do_GET(self) -> None:
                 if self.path.endswith("/account/whoami"):
                     self.reply({"user_id": ME})
+                    return
+                if self.path.endswith("/joined_members"):
+                    room = urllib.parse.unquote(self.path.split("/rooms/")[1].split("/")[0])
+                    if room not in fake.members:
+                        self.send_error(500)
+                        return
+                    self.reply({"joined": {member: {} for member in fake.members[room]}})
                     return
                 try:
                     batch = fake.batches.get(timeout=0.5)
@@ -135,11 +146,15 @@ class MatrixBridgeTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "token").write_text("tok\n")
-        (self.root / "sync").write_text("s0")
         self.hs = FakeHomeserver()
         self.addCleanup(self.hs.close)
         self.sup = FakeSupervisor(self.root / "control.sock")
         self.addCleanup(self.sup.close)
+        self.start()
+
+    def start(self, since: str | None = "s0") -> None:
+        if since:
+            (self.root / "sync").write_text(since)
         env = {
             **os.environ,
             "CLAUDE_AGENT_MATRIX_HOMESERVER": self.hs.url,
@@ -152,9 +167,21 @@ class MatrixBridgeTest(unittest.TestCase):
         self.addCleanup(self.stop)
         self.assertTrue(self.wait_for(lambda: self.sup.subscribers), "the bridge never subscribed")
 
+    def restart(self, since: str | None, history: list[dict]) -> None:
+        """Start again, with ``history`` waiting on the homeserver for the first sync."""
+        self.stop()
+        # The killed bridge's long-poll is still parked in the fake; let it lapse.
+        time.sleep(1)
+        (self.root / "sync").unlink(missing_ok=True)
+        self.sup.subscribers.clear()
+        for batch in history:
+            self.hs.batches.put(batch)
+        self.start(since)
+
     def stop(self) -> None:
-        self.proc.kill()
-        self.proc.wait()
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
 
     def wait_for(self, predicate, timeout: float = 5) -> bool:
         end = time.time() + timeout
@@ -246,6 +273,42 @@ class MatrixBridgeTest(unittest.TestCase):
                        "type": "permission_prompt"})
         self.assertEqual(self.texted(), ["Claude needs your permission"])
 
+    def test_texts_in_a_room_others_read_are_ignored(self) -> None:
+        self.hs.batches.put(message(OWNER, "in the group", room=GROUP))
+        self.text("in the dm")
+        self.assertEqual(self.requested(), [{"op": "submit", "text": "in the dm"}])
+
+    def test_a_room_that_gains_a_member_stops_being_answered(self) -> None:
+        self.text("first")
+        self.requested()
+        self.hs.members[ROOM] = [ME, OWNER, STRANGER]
+        self.text("second")
+        time.sleep(1.5)
+        self.assertEqual(self.sup.requests, [{"op": "submit", "text": "first"}])
+
+    def test_an_answer_is_held_back_if_someone_joined_meanwhile(self) -> None:
+        self.text("go")
+        self.requested()
+        self.hs.members[ROOM] = [ME, OWNER, STRANGER]
+        self.sup.push({"event": "reply", "text": "secret answer"})
+        time.sleep(1)
+        self.assertEqual(self.hs.texts(), [])
+
+    def test_unknown_members_count_as_shared(self) -> None:
+        self.hs.batches.put(message(OWNER, "nowhere", room="!unknown:example.org"))
+        self.text("here")
+        self.assertEqual(self.requested(), [{"op": "submit", "text": "here"}])
+
+    def test_commands_with_no_arguments_are_relayed(self) -> None:
+        self.text("/reload-skills")
+        self.assertEqual(self.requested(), [{"op": "command", "line": "/reload-skills"}])
+
+    def test_a_new_store_does_not_replay_history_and_keeps_its_place(self) -> None:
+        self.restart(since=None, history=[message(OWNER, "old news")])
+        self.text("new")
+        self.assertEqual(self.requested(), [{"op": "submit", "text": "new"}])
+        self.assertTrue(self.wait_for(lambda: (self.root / "sync").read_text().startswith("s")))
+
     def test_invites_are_joined_only_from_the_owner(self) -> None:
         self.hs.batches.put(invite(STRANGER, "!spam:example.org"))
         self.hs.batches.put(invite(OWNER, "!new:example.org"))
@@ -254,6 +317,39 @@ class MatrixBridgeTest(unittest.TestCase):
         self.assertEqual([(m, p) for m, p, _ in self.hs.requests],
                          [("POST", "/_matrix/client/v3/join/%21new%3Aexample.org")])
 
+
+class PlaintextTest(unittest.TestCase):
+    """When the access token would cross a network unencrypted."""
+
+    def test_classification(self) -> None:
+        plaintext_off_host = runpy.run_path(str(BRIDGE))["plaintext_off_host"]
+        cases = {
+            "https://matrix.example.net": False,
+            "http://127.0.0.1:8008": False,
+            "http://[::1]:8008": False,
+            "http://10.0.0.5:6167": False,
+            "http://192.168.1.2": False,
+            "http://localhost:8008": False,
+            # A name proves nothing until it resolves; one that does not is refused.
+            "http://homeserver.invalid": True,
+            # A public resolver's address: documentation ranges are not global.
+            "http://8.8.8.8:8008": True,
+            "http://203.0.113.7:8008": False,
+            "http://matrix.example.net": True,
+        }
+        for url, warned in cases.items():
+            self.assertEqual(plaintext_off_host(url), warned, url)
+
+
+    def test_a_public_plaintext_homeserver_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "token").write_text("tok")
+            env = {**os.environ, "CLAUDE_AGENT_MATRIX_HOMESERVER": "http://8.8.8.8",
+                   "CLAUDE_AGENT_MATRIX_TOKEN_FILE": str(Path(tmp) / "token")}
+            result = subprocess.run([sys.executable, str(BRIDGE)], env=env, capture_output=True,
+                                    text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing a plain-http homeserver", result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

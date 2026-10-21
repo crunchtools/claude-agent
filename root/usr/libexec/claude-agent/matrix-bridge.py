@@ -23,6 +23,7 @@ waiting on screen, and nothing else. Standard library only.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -110,6 +111,10 @@ class Homeserver:
         path = f"/_matrix/client/v3/rooms/{room}/send/m.room.message/{uuid.uuid4().hex}"
         self.call("PUT", path, {"msgtype": "m.text", "body": text})
 
+    def members(self, room_id: str) -> set[str]:
+        room = urllib.parse.quote(room_id, safe="")
+        return set(self.call("GET", f"/_matrix/client/v3/rooms/{room}/joined_members").get("joined", {}))
+
     def typing(self, room_id: str, user_id: str, on: bool) -> None:
         room, user = urllib.parse.quote(room_id, safe=""), urllib.parse.quote(user_id, safe="")
         body = {"typing": True, "timeout": TYPING_TIMEOUT_MS} if on else {"typing": False}
@@ -156,7 +161,7 @@ class Bridge:
         self.supervisor = supervisor
         self.user_id = ""
         self.room = ""
-        self.lock = threading.Lock()
+        self.sender = ""
         self.busy_since = 0.0
         self.activity = 0.0
 
@@ -249,6 +254,10 @@ class Bridge:
     def tell(self, text: str) -> None:
         if not text.strip() or not self.room:
             return
+        # Checked again at send time: someone may have joined since the text came in.
+        if not self.is_direct(self.room, self.sender):
+            log(f"held back a text: {self.room} is no longer one-to-one")
+            return
         try:
             self.homeserver.send_text(self.room, text)
         except (urllib.error.URLError, OSError) as exc:
@@ -315,7 +324,23 @@ class Bridge:
             return
         body = event.get("content", {}).get("body")
         if deliver and isinstance(body, str) and body.strip():
+            if not self.is_direct(room_id, sender):
+                log(f"ignored a text in {room_id}: answers go only to a one-to-one room")
+                return
+            self.sender = sender
             self.handle_text(room_id, body)
+
+    def is_direct(self, room_id: str, sender: str) -> bool:
+        """Only the agent and that sender in the room, now: nobody else reads the answers.
+
+        Asked on every text, never cached, since anyone may join later. A room
+        whose members cannot be read counts as shared.
+        """
+        try:
+            return self.homeserver.members(room_id) == {self.user_id, sender}
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            log(f"members of {room_id} unknown: {exc}")
+            return False
 
     def load_since(self) -> str | None:
         try:
@@ -344,6 +369,18 @@ def question_text(event: dict) -> str:
     return "\n".join(lines)[:QUESTION_CHARS] + "\n\nReply with your answer, or /stop."
 
 
+def plaintext_off_host(url: str) -> bool:
+    """http to any address that is globally routable, or that cannot be resolved."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "http":
+        return False
+    try:
+        resolved = {info[4][0] for info in socket.getaddrinfo(parsed.hostname or "", None)}
+    except OSError:
+        return True
+    return any(ipaddress.ip_address(address.split("%")[0]).is_global for address in resolved)
+
+
 def main() -> int:
     env = os.environ
     try:
@@ -351,6 +388,10 @@ def main() -> int:
         token = Path(env["CLAUDE_AGENT_MATRIX_TOKEN_FILE"]).read_text().strip()
     except (KeyError, OSError) as exc:
         log(f"not configured: {exc}")
+        return 1
+    if plaintext_off_host(homeserver):
+        log("refusing a plain-http homeserver on a public address: the access token would cross the "
+            "network unencrypted. Use https, or a homeserver on a private network.")
         return 1
     allow = {mxid.strip() for mxid in env.get("CLAUDE_AGENT_MATRIX_ALLOW", "").split(",") if mxid.strip()}
     if not allow:

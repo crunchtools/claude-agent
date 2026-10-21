@@ -60,8 +60,11 @@ in `claude-agent-trentina`, whose description says so.
 
 ## Layer 5 — Credential & Identity Management
 
-The runtime holds no credentials. The audit record redacts secrets by key
-name and by token pattern before writing.
+The core runtime holds no credentials. The Matrix bridge holds one: the
+access token of the agent's own Matrix user, read from a file the deployment
+supplies (`CLAUDE_AGENT_MATRIX_TOKEN_FILE`), never from the image or the
+environment. The audit record redacts secrets by key name and by token
+pattern before writing.
 
 ## Layer 6 — Monitoring, Detection & Response
 
@@ -78,7 +81,10 @@ the log off the host is the deployment's.
 - Nothing typed starts with `!` or `/`: a typed `!` runs a shell command with
   no hook, and a typed `/` can run `/exit` or `/config`. Built-ins are typed
   only from the supervisor's allowlist, which the bridge's matches.
-- Texts are pasted only when the session is idle. `tests/test_supervisor.py`
+- Texts are pasted only when the session is idle, with one exception: a text
+  that answers an open question or plan approval follows the Escape that
+  closes it. That Escape interrupts the turn and no hook reports it, so a
+  settle delay stands in for idle, as it does after `/stop`. `tests/test_supervisor.py`
   drives a stand-in Claude Code (`tests/fake_claude.py`) that fires the real
   `hooks.py event`; a change to a Claude Code behavior the supervisor depends
   on is checked against a live session before release.

@@ -66,13 +66,15 @@ def request(message: dict) -> dict:
 
 
 def keep_bridge(supervisor: subprocess.Popen, bridges: list[subprocess.Popen]) -> None:
+    """Run the bridge for as long as the session runs; bridges holds the current one."""
     script = LIBEXEC / "matrix-bridge.py"
     while supervisor.poll() is None:
         bridge = subprocess.Popen([sys.executable, str(script)])
-        bridges.append(bridge)
+        bridges[:] = [bridge]
         status = bridge.wait()
         if supervisor.poll() is None:
-            print(f"claude-agent: the Matrix bridge exited ({status}), restarting", file=sys.stderr, flush=True)
+            message = f"claude-agent: the Matrix bridge exited ({status}), restarting"
+            print(message, file=sys.stderr, flush=True)
             time.sleep(BRIDGE_RESTART_SECONDS)
 
 
@@ -158,11 +160,16 @@ def send(words: list[str], wait: bool) -> int:
         events.sendall(b'{"op": "subscribe"}\n')
         lines = events.makefile()
         lines.readline()
-        if report(request({"op": "submit", "text": text})):
+        reply = request({"op": "submit", "text": text})
+        if report(reply):
             return 1
+        # A held text runs in the next turn; the one running now is someone else's.
+        waiting = bool(reply.get("held"))
         for line in lines:
             event = json.loads(line)
-            if event.get("event") in FINAL_EVENTS:
+            if waiting:
+                waiting = event.get("event") != "busy"
+            elif event.get("event") in FINAL_EVENTS:
                 print(event.get("text") or "\n".join(event.get("texts", [])) or event["event"])
                 return 0 if event["event"] in ("reply", "result") else 1
     return 1
@@ -216,22 +223,26 @@ def status() -> int:
     return 1 if missing else 0
 
 
+def version() -> int:
+    print(f"claude-agent {VERSION}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     command, args = (argv[1], argv[2:]) if len(argv) > 1 else ("", [])
-    if command in ("--version", "-V") and not args:
-        print(f"claude-agent {VERSION}")
-        return 0
-    if command == "run":
-        return run(args)
-    if command == "attach" and args in ([], ["--rw"]):
-        return attach(rw=args == ["--rw"])
-    if command == "send" and args:
-        wait = args[0] == "--wait"
-        return send(args[1:] if wait else args, wait)
-    if command == "stop":
-        return report(request({"op": "stop", "text": " ".join(args)}))
-    if command == "status" and not args:
-        return status()
+    wait = args[:1] == ["--wait"]
+    commands = {
+        "--version": (not args, version),
+        "-V": (not args, version),
+        "run": (True, lambda: run(args)),
+        "attach": (args in ([], ["--rw"]), lambda: attach(rw=args == ["--rw"])),
+        "send": (bool(args), lambda: send(args[1:] if wait else args, wait)),
+        "stop": (True, lambda: report(request({"op": "stop", "text": " ".join(args)}))),
+        "status": (not args, status),
+    }
+    valid, action = commands.get(command, (False, None))
+    if valid and action:
+        return action()
     print(__doc__.strip(), file=sys.stderr)
     return 2
 

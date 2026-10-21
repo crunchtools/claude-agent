@@ -13,7 +13,9 @@ prompt is chosen by the prompt's text:
     exit           exits 3
     anything else  replies "echo: <prompt>"
 
-FAKE_CLAUDE_DIR is where its transcripts go.
+FAKE_CLAUDE_DIR is where its transcripts go. FAKE_CLAUDE_UNTRUSTED=1 makes it
+stop at the working directory's trust question, and --permission-mode
+bypassPermissions shows the warning whose default is "No, exit".
 """
 
 from __future__ import annotations
@@ -37,7 +39,6 @@ class Fake:
     def __init__(self) -> None:
         self.session = ""
         self.transcript = Path()
-        self.new_session("startup")
 
     def hook(self, name: str, **fields: object) -> None:
         event = {"hook_event_name": name, "session_id": self.session,
@@ -94,7 +95,25 @@ class Fake:
         sys.stdout.write(text + "\r\n")
         sys.stdout.flush()
 
+    def startup(self) -> bool:
+        """The startup screens; False when the session should exit."""
+        if os.environ.get("FAKE_CLAUDE_UNTRUSTED"):
+            self.say("Do you trust the files in this folder?  1. No, exit  2. Yes, proceed")
+            while True:
+                read_key()
+        if "bypassPermissions" in sys.argv or os.environ.get("FAKE_CLAUDE_BYPASS_WARNING"):
+            self.say("WARNING: Claude Code running in Bypass Permissions mode  1. No, exit  2. Yes, I accept")
+            keys = ""
+            while not keys.endswith("\r"):
+                keys += read_key()
+            return "\x1b[B" in keys
+        return True
+
     def run(self) -> int:
+        return self.serve() if self.startup() else 1
+
+    def serve(self) -> int:
+        self.new_session("startup")
         self.say("Welcome to Fake Claude")
         buffer = ""
         while True:
