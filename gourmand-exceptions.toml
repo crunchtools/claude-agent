@@ -30,3 +30,39 @@ check = "EV013-hidden_env_config"
 path = "root/usr/libexec/claude-agent/hooks.py"
 justification = "CLAUDE_AGENT, CLAUDE_AGENT_AUDIT_DIR and CLAUDE_AGENT_BREAKER_DIR are the hooks' documented interface, listed with their defaults in docs/hooks.md and the module docstring. A hook receives nothing from Claude Code but the event on stdin and its command line, which is fixed in managed settings, so the environment is the only per-deployment channel."
 classification = "by_design"
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "root/usr/libexec/claude-agent/supervisor.py"
+justification = "Installed by the claude-agent package; `claude-agent run` starts it to hold the session. It lives under libexec because nothing runs it by hand. Documented in docs/supervisor.md; covered by tests/test_supervisor.py."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "root/usr/libexec/claude-agent/matrix-bridge.py"
+justification = "Installed by the claude-agent-matrix package; `claude-agent run` starts it when a homeserver is configured. Documented in docs/matrix.md; covered by tests/test_matrix_bridge.py."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "root/usr/libexec/claude-agent/supervisor.py"
+justification = "CLAUDE_AGENT_RUNTIME_DIR, CLAUDE_AGENT_SOCKET, CLAUDE_AGENT_CLAUDE, CLAUDE_AGENT_STARTUP_QUIET and CLAUDE_AGENT_RESULT_TIMEOUT are the supervisor's documented configuration, listed with defaults in docs/supervisor.md. It runs as a service under a unit or a container entrypoint, where the environment is the configuration channel."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "root/usr/libexec/claude-agent/matrix-bridge.py"
+justification = "The CLAUDE_AGENT_MATRIX_* variables, CLAUDE_AGENT_SOCKET and CLAUDE_AGENT_RUNTIME_DIR are the bridge's documented configuration, listed in docs/matrix.md; `claude-agent run` passes them through from the service's environment."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "tests/fake_claude.py"
+justification = "A test double. FAKE_CLAUDE_DIR is where tests/test_supervisor.py tells it to write its transcripts, and is documented in its docstring."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH024-print_only_server_logging"
+path = "root/usr/libexec/claude-agent/hooks.py"
+justification = "A hook is a short-lived command, not a server: Claude Code shows its stderr and decides what to do from its exit code and stdout. Usage, a breaker failure and a missed supervisor event are each one line to stderr; a logging framework would add configuration with nothing to configure."
+classification = "by_design"

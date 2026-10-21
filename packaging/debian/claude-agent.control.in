@@ -7,7 +7,9 @@ Section: admin
 Priority: optional
 Homepage: https://github.com/crunchtools/claude-agent
 Description: run Claude Code as an unattended agent
- claude-agent ships the hooks an unattended Claude Code session needs:
+ claude-agent run holds an interactive session in a pty and takes prompts
+ over a local socket, holding them while a turn runs. It ships the hooks an
+ unattended Claude Code session needs:
  circuit breakers that halt a conversation that has run away, an audit
  record of every tool call, and an opt-in hook that answers permission
  prompts. The hooks act only in sessions started with CLAUDE_AGENT=1.

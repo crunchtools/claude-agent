@@ -1,0 +1,12 @@
+Package: claude-agent-matrix
+Version: @VERSION@-1
+Architecture: all
+Maintainer: crunchtools <scott.mccarty@crunchtools.com>
+Depends: claude-agent (= @VERSION@-1)
+Section: admin
+Priority: optional
+Homepage: https://github.com/crunchtools/claude-agent
+Description: reach a claude-agent session by Matrix text
+ A bridge that carries texts from allowed Matrix senders to the session that
+ claude-agent run holds, and texts back each turn's final answer and command
+ results, with a typing indicator while a turn runs.

@@ -18,7 +18,7 @@ def load(name: str) -> dict:
 def commands(settings: dict, event: str) -> dict[str, str]:
     """Each hook command of an event, mapped to its matcher."""
     return {
-        hook["command"]: entry["matcher"]
+        hook["command"]: entry.get("matcher", "")
         for entry in settings.get("hooks", {}).get(event, [])
         for hook in entry["hooks"]
     }
@@ -37,6 +37,11 @@ class CoreFragmentTest(unittest.TestCase):
         # still calls for; PermissionRequest is that prompt.
         self.assertEqual(commands(self.settings, "PreToolUse")[LIBEXEC + "allow-hook.sh"], "")
         self.assertEqual(commands(self.settings, "PermissionRequest")[LIBEXEC + "allow-hook.sh"], "")
+
+    def test_the_supervisor_hears_every_turn_event(self) -> None:
+        for event in ("SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "Notification",
+                      "PreToolUse", "PostToolUse"):
+            self.assertIn(LIBEXEC + "hooks.py event", commands(self.settings, event), event)
 
     def test_core_sets_no_machine_wide_policy(self) -> None:
         # Installed on a workstation, the core package must leave the

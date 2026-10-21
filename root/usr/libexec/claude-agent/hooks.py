@@ -3,6 +3,8 @@
 
     hooks.py audit     PostToolUse. One JSON line per tool call.
     hooks.py breaker   PreToolUse. Denies a conversation that has run away.
+    hooks.py event     The turn's events, handed to the supervisor that
+                       started this session (CLAUDE_AGENT_SOCKET), if any.
 
 Both read the hook event on stdin, and both do nothing unless CLAUDE_AGENT=1
 is set: managed settings reach every Claude Code session on the machine, and
@@ -28,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
 import time
@@ -212,6 +215,28 @@ def breaker(event: dict[str, Any]) -> str | None:
     return reason
 
 
+# What the supervisor needs from each event; a tool's input only for the tools
+# that open a dialog, whose question is texted to the operator.
+EVENT_FIELDS = ("hook_event_name", "session_id", "transcript_path", "tool_name", "source",
+                "last_assistant_message", "error", "message", "notification_type")
+DIALOG_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+
+def forward(event: dict[str, Any]) -> None:
+    """Hand one hook event to the supervisor. A session it did not start has no socket."""
+    path = os.environ.get("CLAUDE_AGENT_SOCKET")
+    if not path:
+        return
+    message = {key: event[key] for key in EVENT_FIELDS if key in event}
+    if event.get("tool_name") in DIALOG_TOOLS:
+        message["tool_input"] = event.get("tool_input", {})
+    message["op"] = "event"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(2)
+        conn.connect(path)
+        conn.sendall(json.dumps(message, default=str).encode() + b"\n")
+
+
 def deny(reason: str) -> None:
     decision = {
         "hookEventName": "PreToolUse",
@@ -226,13 +251,21 @@ def deny(reason: str) -> None:
 
 def main(argv: list[str]) -> int:
     mode = argv[1:]
-    if mode not in (["audit"], ["breaker"]):
-        print("usage: hooks.py audit|breaker  (hook event on stdin)", file=sys.stderr)
+    if mode not in (["audit"], ["breaker"], ["event"]):
+        print("usage: hooks.py audit|breaker|event  (hook event on stdin)", file=sys.stderr)
         return 1
     if not enabled():
         return 0
     if mode == ["audit"]:
         audit(json.load(sys.stdin))
+        return 0
+    if mode == ["event"]:
+        try:
+            forward(json.load(sys.stdin))
+        except (OSError, ValueError) as exc:
+            # Exit 1 is reported and the turn goes on; the supervisor missed one event.
+            print(f"hooks.py event: {exc!r}", file=sys.stderr)
+            return 1
         return 0
     try:
         reason = breaker(json.load(sys.stdin))

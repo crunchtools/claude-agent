@@ -38,7 +38,7 @@ jobs:
 
       - name: Stage the trees
         run: |
-          for package in all claude-agent claude-agent-trentina; do
+          for package in all claude-agent claude-agent-matrix claude-agent-trentina; do
             packaging/stage.sh "$package" "stage/$package"
           done
           # Artifacts drop file modes; a tarball keeps them.
@@ -94,13 +94,15 @@ jobs:
         run: |
           mkdir stage
           tar -C stage -xzf stage.tar.gz
-          for package in claude-agent claude-agent-trentina; do
+          for package in claude-agent claude-agent-matrix claude-agent-trentina; do
             pkg="stage/$package"
             mkdir -p "$pkg/DEBIAN"
             install -Dm0644 LICENSE "$pkg/usr/share/doc/$package/copyright"
             sed "s/@VERSION@/$VERSION/g" "packaging/debian/$package.control.in" > "$pkg/DEBIAN/control"
             echo "Installed-Size: $(du -sk "$pkg/usr" | cut -f1)" >> "$pkg/DEBIAN/control"
-            install -m0644 "packaging/debian/$package.conffiles" "$pkg/DEBIAN/conffiles"
+            if [ -s "packaging/debian/$package.conffiles" ]; then
+              install -m0644 "packaging/debian/$package.conffiles" "$pkg/DEBIAN/conffiles"
+            fi
             dpkg-deb -Zxz --root-owner-group --build "$pkg" "${package}_${VERSION}-1_all.deb"
             dpkg-deb --info "${package}_${VERSION}-1_all.deb"
           done
@@ -146,7 +148,7 @@ jobs:
             echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
               > /etc/apt/sources.list.d/claude-code.list
             apt-get update
-            apt-get install -y ./claude-agent_*.deb ./claude-agent-trentina_*.deb
+            apt-get install -y ./claude-agent_*.deb ./claude-agent-matrix_*.deb ./claude-agent-trentina_*.deb
           else
             printf '%s\n' '[claude-code]' 'name=Claude Code' \
               'baseurl=https://downloads.claude.ai/claude-code/rpm/stable' \
