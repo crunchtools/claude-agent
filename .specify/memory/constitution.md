@@ -52,10 +52,11 @@ in a row, stays tripped, and fails closed. `allow-hook.sh` answers permission
 prompts only with `CLAUDE_AGENT_ANSWER_PERMISSIONS=1`, and never a question to
 the person or plan approval.
 
-**Gate:** every hook does nothing unless `CLAUDE_AGENT=1`. Managed settings
-reach every session on the machine; installing the core package must not
-change a person's interactive Claude Code. Policy that applies machine-wide
-lives only in `claude-agent-trentina`, whose description says so.
+**Gate:** every hook in the core `claude-agent` package does nothing unless
+`CLAUDE_AGENT=1`. Managed settings reach every session on the machine;
+installing the core package must not change a person's interactive Claude
+Code. Policy that applies machine-wide, the memory guard included, lives only
+in `claude-agent-trentina`, whose description says so.
 
 ## Layer 5 — Credential & Identity Management
 
@@ -65,8 +66,9 @@ name and by token pattern before writing.
 ## Layer 6 — Monitoring, Detection & Response
 
 `hooks.py audit` writes one JSON line per tool call to
-`CLAUDE_AGENT_AUDIT_DIR`, with the profile's fields. Retention and shipping
-are the deployment's.
+`CLAUDE_AGENT_AUDIT_DIR`, with the profile's fields, and deletes files older
+than `CLAUDE_AGENT_AUDIT_RETENTION_DAYS` (default 120) once a day. Shipping
+the log off the host is the deployment's.
 
 ## Packaging Contract
 

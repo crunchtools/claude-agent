@@ -10,8 +10,10 @@ only an agent's sessions are meant to be counted and logged. The supervisor
 sets it for the sessions it starts; an agent image sets it for everything.
 
 Where they write: CLAUDE_AGENT_AUDIT_DIR (default
-$XDG_STATE_HOME/claude-agent/audit) and CLAUDE_AGENT_BREAKER_DIR (default
-$XDG_RUNTIME_DIR/claude-agent/breaker, or a per-user directory in /tmp).
+$XDG_STATE_HOME/claude-agent/audit), kept CLAUDE_AGENT_AUDIT_RETENTION_DAYS
+(default 120), and CLAUDE_AGENT_BREAKER_DIR (default
+$XDG_RUNTIME_DIR/claude-agent/breaker, or a per-user directory in /tmp),
+whose files go after a week without a call.
 
 They fail in opposite directions on purpose. An audit hook that cannot write
 exits non-zero, which Claude Code reports and carries on from: losing a log
@@ -28,6 +30,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,11 +38,20 @@ from typing import Any
 MAX_VALUE_CHARS = 200
 DEFAULT_MAX_TOOL_CALLS = 500
 DEFAULT_MAX_REPEAT = 5
+DEFAULT_AUDIT_RETENTION_DAYS = 120
+BREAKER_STATE_DAYS = 7
 
 SECRET_KEY = re.compile(r"token|secret|passw|api[_-]?key|authorization|credential|cookie", re.I)
 SECRET_VALUE = re.compile(
     r"(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}"
     r"|\b(gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b"
+)
+# A secret inside a string: a header (X-API-Key: v) or an assignment
+# (TOKEN=v, --password v) whose name says what it is.
+SECRET_FIELD = re.compile(
+    r"((?:[\w-]*(?:token|secret|passw|api[_-]?key|credential|cookie)[\w-]*)\s*[:=]\s*['\"]?|"
+    r"--?[\w-]*(?:token|secret|passw|api[_-]?key)[\w-]*[\s=]+['\"]?)[^\s'\"]+",
+    re.I,
 )
 
 
@@ -77,6 +89,7 @@ def redact(value: Any, key: str = "") -> Any:
     if SECRET_KEY.search(key):
         return "[REDACTED]"
     text = SECRET_VALUE.sub(lambda m: (m.group(1) or "") + "[REDACTED]", value)
+    text = SECRET_FIELD.sub(lambda m: m.group(1) + "[REDACTED]", text)
     if len(text) > MAX_VALUE_CHARS:
         return f"{text[:MAX_VALUE_CHARS]}... [{len(text)} chars]"
     return text
@@ -110,11 +123,26 @@ def build_record(event: dict[str, Any], outcome: str) -> dict[str, Any]:
     }
 
 
+def prune(directory: Path, pattern: str, days: float) -> None:
+    """Delete files matching ``pattern`` not written for ``days``."""
+    cutoff = time.time() - days * 86400
+    for path in directory.glob(pattern):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
 def append(record: dict[str, Any]) -> None:
     directory = audit_dir()
     directory.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, separators=(",", ":"), default=str) + "\n"
     path = directory / f"audit-{record['timestamp'][:10]}.jsonl"
+    if not path.exists():
+        # Once a day, when the day's file starts, the oldest ones go.
+        days = limit("CLAUDE_AGENT_AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
+        prune(directory, "audit-*.jsonl", days)
     # O_APPEND keeps concurrent sessions' lines whole.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
     try:
@@ -160,7 +188,10 @@ def breaker(event: dict[str, Any]) -> str | None:
     session = "".join(c for c in str(event.get("session_id", "")) if c.isalnum() or c in "-_") or "unknown"
     state_dir = breaker_dir()
     state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with open(state_dir / f"{session}.json", "a+") as handle:
+    state_file = state_dir / f"{session}.json"
+    if not state_file.exists():
+        prune(state_dir, "*.json", BREAKER_STATE_DAYS)
+    with open(state_file, "a+") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         handle.seek(0)
         raw = handle.read()
@@ -205,6 +236,7 @@ def main(argv: list[str]) -> int:
     try:
         reason = breaker(json.load(sys.stdin))
     except Exception as exc:
+        print(f"hooks.py breaker: state unavailable: {exc!r}", file=sys.stderr)
         reason = f"breaker state unavailable ({type(exc).__name__})"
     if reason:
         deny(reason)

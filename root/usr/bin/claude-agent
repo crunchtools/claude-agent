@@ -28,7 +28,12 @@ def claude_version() -> str | None:
     claude = shutil.which("claude")
     if not claude:
         return None
-    result = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=30, check=False)
+    try:
+        result = subprocess.run(
+            [claude, "--version"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     return result.stdout.strip() or None
 
 

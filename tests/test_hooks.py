@@ -94,6 +94,21 @@ class AuditTest(unittest.TestCase):
             self.assertNotIn(secret, text)
         self.assertIn("Bearer [REDACTED]", text)
 
+    def test_secrets_inside_commands_are_redacted(self) -> None:
+        command = "curl -H 'X-API-Key: k3y-value' --password hunter2 https://example.com && TOKEN=abc123 run"
+        text = hooks.redact(command)
+        for secret in ("k3y-value", "hunter2", "abc123"):
+            self.assertNotIn(secret, text)
+        self.assertIn("https://example.com", text)
+
+    def test_old_audit_files_are_pruned_when_a_day_starts(self) -> None:
+        old = self.dir / "audit-2000-01-01.jsonl"
+        old.write_text("{}\n")
+        os.utime(old, (0, 0))
+        run_hook("audit", {"session_id": "s", "tool_name": "Bash", "tool_input": {}}, self.env)
+        self.assertFalse(old.exists())
+        self.assertEqual(len(read_records(self.dir)), 1)
+
     def test_long_values_are_cut(self) -> None:
         self.assertEqual(hooks.redact("x" * 5000), "x" * hooks.MAX_VALUE_CHARS + "... [5000 chars]")
 
@@ -175,6 +190,14 @@ class BreakerTest(unittest.TestCase):
         self.env = env
         self.assertIsNone(self.call("ls"))
         self.assertTrue((self.state.parent / "run/claude-agent/breaker/s1.json").is_file())
+
+    def test_stale_breaker_state_is_pruned(self) -> None:
+        self.state.mkdir(parents=True)
+        stale = self.state / "gone.json"
+        stale.write_text("{}")
+        os.utime(stale, (0, 0))
+        self.call("ls", session="new")
+        self.assertFalse(stale.exists())
 
     def test_session_id_cannot_leave_the_state_directory(self) -> None:
         self.call("ls", session="../../escape")

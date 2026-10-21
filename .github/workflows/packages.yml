@@ -167,6 +167,16 @@ jobs:
           done
           echo "$event" | /usr/libexec/claude-agent/hooks.py breaker | grep -q '"permissionDecision": "deny"'
           grep -q breaker_tripped /tmp/audit/audit-*.jsonl
+          # Audit writes a line per call.
+          echo "$event" | /usr/libexec/claude-agent/hooks.py audit
+          test "$(grep -c '"tool":"Bash"' /tmp/audit/audit-*.jsonl)" -ge 2
+          # Prompts off answers only when asked to.
+          test -z "$(echo "$event" | /usr/libexec/claude-agent/allow-hook.sh)"
+          echo "$event" | CLAUDE_AGENT_ANSWER_PERMISSIONS=1 /usr/libexec/claude-agent/allow-hook.sh |
+            grep -q '"permissionDecision":"allow"'
+          # The memory guard refuses a write into Claude Code's file memory.
+          echo '{"tool_name":"Write","tool_input":{"file_path":"/home/a/.claude/projects/p/memory/x.md"}}' |
+            /usr/libexec/claude-agent/deny-local-memory.sh | grep -q '"permissionDecision":"deny"'
 
   image:
     needs: rpm
