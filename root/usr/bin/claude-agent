@@ -31,7 +31,7 @@ import time
 import tty
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 MANAGED = Path("/etc/claude-code/managed-settings.d")
 # Installed, this is /usr/libexec/claude-agent; in the source tree, root/usr/libexec.
 LIBEXEC = Path(__file__).resolve().parent.parent / "libexec/claude-agent"

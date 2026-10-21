@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
+### Fixed
+- The Matrix bridge acts only on `m.text`. A notice (a gateway's "your
+  message was not sent", for one) was treated as a prompt from the sender,
+  and the agent answered it.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
