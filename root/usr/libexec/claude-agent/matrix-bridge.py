@@ -322,6 +322,12 @@ class Bridge:
         if sender not in self.allow:
             log(f"dropped a message in {room_id} from {sender}")
             return
+        msgtype = event.get("content", {}).get("msgtype")
+        if msgtype != "m.text":
+            # A notice is a bot talking (the spec says never answer one); a
+            # gateway's "not sent" notice would otherwise become a prompt.
+            log(f"ignored {msgtype} in {room_id} from {sender}")
+            return
         body = event.get("content", {}).get("body")
         if deliver and isinstance(body, str) and body.strip():
             if not self.is_direct(room_id, sender):

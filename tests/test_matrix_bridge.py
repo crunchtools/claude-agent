@@ -25,9 +25,9 @@ ROOM = "!dm:example.org"
 GROUP = "!group:example.org"
 
 
-def message(sender: str, body: str, room: str = ROOM) -> dict:
+def message(sender: str, body: str, room: str = ROOM, msgtype: str = "m.text") -> dict:
     return {"rooms": {"join": {room: {"timeline": {"events": [
-        {"type": "m.room.message", "sender": sender, "content": {"msgtype": "m.text", "body": body}},
+        {"type": "m.room.message", "sender": sender, "content": {"msgtype": msgtype, "body": body}},
     ]}}}}}
 
 
@@ -215,6 +215,13 @@ class MatrixBridgeTest(unittest.TestCase):
         self.text("!rm -rf /")
         self.assertEqual(self.texted(), ["Shell commands by text are off."])
         self.assertEqual(self.sup.requests, [])
+
+    def test_notices_are_never_answered(self) -> None:
+        # A gateway that withholds the agent's text posts a notice as the owner.
+        self.hs.batches.put(message(OWNER, "[gateway] your message was not sent", msgtype="m.notice"))
+        self.text("from the owner")
+        self.assertEqual(self.requested(), [{"op": "submit", "text": "from the owner"}])
+        self.assertEqual(self.hs.texts(), [])
 
     def test_allowed_commands_are_checked_and_relayed(self) -> None:
         self.text("/Effort High.")
