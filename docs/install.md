@@ -30,7 +30,7 @@ crunchtools `588C E8BF 2F36 D77E 1B1E 545C C04F 530D 3931 F683`.
 
 `/usr/share/doc/claude-agent/examples/` has `Containerfile.ubi`,
 `Containerfile.debian` and `Containerfile.hummingbird`, which CI builds on every
-release, plus `claude-agent.container` to run one under systemd:
+change, plus `claude-agent.container` to run one under systemd:
 
 ```bash
 podman build -f Containerfile.ubi -t my-agent .

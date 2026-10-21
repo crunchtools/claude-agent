@@ -17,7 +17,7 @@ hooks, not the screen.
 - `!` and unlisted `/` commands are never typed.
 - `/stop [text]` interrupts, then sends `text`.
 - Matrix: only senders in `CLAUDE_AGENT_MATRIX_ALLOW`, only in a one-to-one
-  room. Plain `http` only to loopback or a private network.
+  room, checked again before each answer. Plain `http` only to loopback or a private network.
   You get a typing bubble, then the final answer. Notices are ignored.
 
 | Text | Result |
