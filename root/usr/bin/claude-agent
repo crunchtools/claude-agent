@@ -1,27 +1,178 @@
 #!/usr/bin/env python3
 """claude-agent: run Claude Code as an unattended agent.
 
+    claude-agent run [-- CLAUDE-ARGS...]   hold a session; exits with Claude's status
+    claude-agent attach [--rw]             watch the session live (Ctrl-] detaches)
+    claude-agent send [--wait] TEXT...     send a prompt; held while a turn runs
+    claude-agent stop [TEXT...]            interrupt the turn, then send TEXT
+    claude-agent status                    what is installed, and the running session
     claude-agent --version
-    claude-agent status     what is installed, and whether this is an agent
 
-Exit codes: 0 ok, 1 something status checks is missing, 2 usage error.
+`run` also starts the Matrix bridge when claude-agent-matrix is installed and
+CLAUDE_AGENT_MATRIX_HOMESERVER is set, and restarts it if it dies.
+
+Exit codes: 0 ok, 1 refused, not running or not installed, 2 usage error.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import runpy
+import select
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import termios
+import threading
+import time
+import tty
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MANAGED = Path("/etc/claude-code/managed-settings.d")
-LIBEXEC = Path("/usr/libexec/claude-agent")
+# Installed, this is /usr/libexec/claude-agent; in the source tree, root/usr/libexec.
+LIBEXEC = Path(__file__).resolve().parent.parent / "libexec/claude-agent"
+# The supervisor says where its socket is.
+socket_path = runpy.run_path(str(LIBEXEC / "supervisor.py"))["socket_path"]
 FRAGMENTS = {
     "10-claude-agent.json": "claude-agent",
     "20-claude-agent-trentina.json": "claude-agent-trentina",
 }
+DETACH = b"\x1d"
+BRIDGE_RESTART_SECONDS = 5
+FINAL_EVENTS = {"reply", "error", "stopped", "result", "exited"}
+
+
+def connect() -> socket.socket:
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn.connect(str(socket_path()))
+    return conn
+
+
+def request(message: dict) -> dict:
+    try:
+        with connect() as conn:
+            conn.settimeout(10)
+            conn.sendall(json.dumps(message).encode() + b"\n")
+            return json.loads(conn.makefile().readline() or "{}")
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": f"no session is running ({exc.__class__.__name__})"}
+
+
+# run -----------------------------------------------------------------------
+
+
+def keep_bridge(supervisor: subprocess.Popen, bridges: list[subprocess.Popen]) -> None:
+    script = LIBEXEC / "matrix-bridge.py"
+    while supervisor.poll() is None:
+        bridge = subprocess.Popen([sys.executable, str(script)])
+        bridges.append(bridge)
+        status = bridge.wait()
+        if supervisor.poll() is None:
+            print(f"claude-agent: the Matrix bridge exited ({status}), restarting", file=sys.stderr, flush=True)
+            time.sleep(BRIDGE_RESTART_SECONDS)
+
+
+def run(args: list[str]) -> int:
+    if args[:1] == ["--"]:
+        args = args[1:]
+    supervisor = subprocess.Popen([sys.executable, str(LIBEXEC / "supervisor.py"), *args])
+    bridges: list[subprocess.Popen] = []
+    if os.environ.get("CLAUDE_AGENT_MATRIX_HOMESERVER") and (LIBEXEC / "matrix-bridge.py").is_file():
+        threading.Thread(target=keep_bridge, args=(supervisor, bridges), daemon=True).start()
+
+    def forward(signum: int, _frame: object) -> None:
+        supervisor.send_signal(signum)
+
+    signal.signal(signal.SIGTERM, forward)
+    signal.signal(signal.SIGINT, forward)
+    status = supervisor.wait()
+    for bridge in bridges:
+        bridge.terminate()
+    return status
+
+
+# attach --------------------------------------------------------------------
+
+
+def attach(rw: bool) -> int:
+    try:
+        conn = connect()
+    except OSError as exc:
+        print(f"claude-agent: no session is running ({exc.__class__.__name__})", file=sys.stderr)
+        return 1
+    conn.sendall(json.dumps({"op": "attach", "rw": rw}).encode() + b"\n")
+    ack = b""
+    while not ack.endswith(b"\n"):
+        ack += conn.recv(1)
+    mode = "read-write" if rw else "read-only"
+    print(f"Attached {mode}. Ctrl-] detaches.\r", file=sys.stderr)
+    saved = termios.tcgetattr(0) if os.isatty(0) else None
+    if saved:
+        tty.setraw(0)
+    try:
+        relay(conn, rw)
+    finally:
+        if saved:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved)
+        conn.close()
+    print("\nDetached.", file=sys.stderr)
+    return 0
+
+
+def relay(conn: socket.socket, rw: bool) -> None:
+    while True:
+        ready, _, _ = select.select([0, conn], [], [])
+        if conn in ready:
+            data = conn.recv(65536)
+            if not data:
+                return
+            os.write(1, data)
+        if 0 in ready:
+            keys = os.read(0, 1024)
+            if not keys or DETACH in keys:
+                return
+            if rw:
+                conn.sendall(keys)
+
+
+# send, stop, status --------------------------------------------------------
+
+
+def send(words: list[str], wait: bool) -> int:
+    text = " ".join(words)
+    if not text.strip():
+        print("claude-agent send: nothing to send", file=sys.stderr)
+        return 2
+    if not wait:
+        return report(request({"op": "submit", "text": text}))
+    try:
+        events = connect()
+    except OSError as exc:
+        print(f"claude-agent: no session is running ({exc.__class__.__name__})", file=sys.stderr)
+        return 1
+    with events:
+        events.sendall(b'{"op": "subscribe"}\n')
+        lines = events.makefile()
+        lines.readline()
+        if report(request({"op": "submit", "text": text})):
+            return 1
+        for line in lines:
+            event = json.loads(line)
+            if event.get("event") in FINAL_EVENTS:
+                print(event.get("text") or "\n".join(event.get("texts", [])) or event["event"])
+                return 0 if event["event"] in ("reply", "result") else 1
+    return 1
+
+
+def report(reply: dict) -> int:
+    if reply.get("ok"):
+        return 0
+    print(f"claude-agent: {reply.get('error', 'refused')}", file=sys.stderr)
+    return 1
 
 
 def claude_version() -> str | None:
@@ -51,19 +202,35 @@ def status() -> int:
         present = (MANAGED / name).is_file()
         row(package, "installed" if present else "not installed")
         missing |= package == "claude-agent" and not present
+    row("claude-agent-matrix", "installed" if (LIBEXEC / "matrix-bridge.py").is_file() else "not installed")
     hooks = LIBEXEC / "hooks.py"
     row("hooks", "present" if os.access(hooks, os.X_OK) else "missing")
     missing |= not os.access(hooks, os.X_OK)
     agent = os.environ.get("CLAUDE_AGENT") == "1"
     row("CLAUDE_AGENT", "1 (hooks active)" if agent else "unset (hooks inactive in this shell)")
+    session = request({"op": "status"})
+    if session.get("ok"):
+        row("session", f"{session['state']}, {session['held']} held, pid {session['pid']}")
+    else:
+        row("session", "none running")
     return 1 if missing else 0
 
 
 def main(argv: list[str]) -> int:
-    if argv[1:] in (["--version"], ["-V"]):
+    command, args = (argv[1], argv[2:]) if len(argv) > 1 else ("", [])
+    if command in ("--version", "-V") and not args:
         print(f"claude-agent {VERSION}")
         return 0
-    if argv[1:] == ["status"]:
+    if command == "run":
+        return run(args)
+    if command == "attach" and args in ([], ["--rw"]):
+        return attach(rw=args == ["--rw"])
+    if command == "send" and args:
+        wait = args[0] == "--wait"
+        return send(args[1:] if wait else args, wait)
+    if command == "stop":
+        return report(request({"op": "stop", "text": " ".join(args)}))
+    if command == "status" and not args:
         return status()
     print(__doc__.strip(), file=sys.stderr)
     return 2

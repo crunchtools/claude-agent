@@ -5,6 +5,8 @@
 claude-agent          0755 /usr/bin/claude-agent
 claude-agent          0755 /usr/libexec/claude-agent/hooks.py
 claude-agent          0755 /usr/libexec/claude-agent/allow-hook.sh
+claude-agent          0755 /usr/libexec/claude-agent/supervisor.py
 claude-agent          0644 /etc/claude-code/managed-settings.d/10-claude-agent.json
 claude-agent-trentina 0755 /usr/libexec/claude-agent/deny-local-memory.sh
 claude-agent-trentina 0644 /etc/claude-code/managed-settings.d/20-claude-agent-trentina.json
+claude-agent-matrix   0755 /usr/libexec/claude-agent/matrix-bridge.py

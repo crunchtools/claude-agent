@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -208,6 +209,55 @@ class BreakerTest(unittest.TestCase):
         self.assertIsNone(hooks.count(state, "a", 10, 2))
         self.assertIsNone(hooks.count(state, "a", 10, 2))
         self.assertIsNotNone(hooks.count(state, "a", 10, 2))
+
+
+class EventTest(unittest.TestCase):
+    """hooks.py event hands the turn's events to the supervisor's socket."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "control.sock"
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(self.server.close)
+        self.server.bind(str(self.path))
+        self.server.listen(1)
+        self.server.settimeout(5)
+
+    def received(self, event: dict) -> dict:
+        result = run_hook("event", event, {"CLAUDE_AGENT_SOCKET": str(self.path)})
+        self.assertEqual((result.returncode, result.stdout), (0, ""))
+        conn, _ = self.server.accept()
+        with conn:
+            return json.loads(conn.makefile().readline())
+
+    def test_stop_carries_the_final_answer_and_nothing_else(self) -> None:
+        message = self.received({
+            "hook_event_name": "Stop", "session_id": "s", "last_assistant_message": "Done.",
+            "transcript_path": "/t.jsonl", "cwd": "/home/a", "permission_mode": "default",
+        })
+        self.assertEqual(message, {"op": "event", "hook_event_name": "Stop", "session_id": "s",
+                                   "transcript_path": "/t.jsonl", "last_assistant_message": "Done."})
+
+    def test_only_a_dialog_tool_sends_its_input(self) -> None:
+        question = {"questions": [{"question": "Which?"}]}
+        asked = self.received({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+                               "tool_input": question})
+        self.assertEqual(asked["tool_input"], question)
+        bash = self.received({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": "cat secrets"}})
+        self.assertNotIn("tool_input", bash)
+
+    def test_no_socket_no_supervisor_nothing_sent(self) -> None:
+        result = run_hook("event", {"hook_event_name": "Stop"}, {"CLAUDE_AGENT_SOCKET": ""})
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+
+    def test_a_supervisor_that_is_gone_does_not_stop_the_turn(self) -> None:
+        gone = {"CLAUDE_AGENT_SOCKET": str(self.path) + ".gone"}
+        result = run_hook("event", {"hook_event_name": "Stop"}, gone)
+        # 1 is reported and the turn goes on; 2 is the one code that would block it.
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("hooks.py event", result.stderr)
 
 
 class GateTest(unittest.TestCase):

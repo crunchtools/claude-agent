@@ -70,6 +70,19 @@ name and by token pattern before writing.
 than `CLAUDE_AGENT_AUDIT_RETENTION_DAYS` (default 120) once a day. Shipping
 the log off the host is the deployment's.
 
+## Text Path Contract
+
+- The supervisor's state comes from hooks only. It reads the screen in two
+  narrow places: startup warnings, and the confirmation a typed built-in may
+  open.
+- Nothing typed starts with `!` or `/`: a typed `!` runs a shell command with
+  no hook, and a typed `/` can run `/exit` or `/config`. Built-ins are typed
+  only from the supervisor's allowlist, which the bridge's matches.
+- Texts are pasted only when the session is idle. `tests/test_supervisor.py`
+  drives a stand-in Claude Code (`tests/fake_claude.py`) that fires the real
+  `hooks.py event`; a change to a Claude Code behavior the supervisor depends
+  on is checked against a live session before release.
+
 ## Packaging Contract
 
 - `packaging/files.txt` names the package and mode of every file under

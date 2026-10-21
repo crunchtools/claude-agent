@@ -21,11 +21,23 @@ Requires:       jq
 
 %description
 claude-agent turns Claude Code into an agent that runs with nobody at the
-keyboard. It ships the hooks an unattended session needs: circuit breakers
+keyboard. `claude-agent run` holds an interactive session in a pty and takes
+prompts and allowlisted commands over a local socket, holding them while a
+turn runs. It ships the hooks an unattended session needs: circuit breakers
 that halt a conversation that has run away, an audit record of every tool
 call, and an opt-in hook that answers permission prompts. The hooks act only
 in sessions started with CLAUDE_AGENT=1, so installing the package does not
 change anyone's interactive Claude Code.
+
+%package matrix
+Summary:        Reach a claude-agent session by Matrix text
+Requires:       claude-agent = %{version}-%{release}
+
+%description matrix
+A bridge that carries texts from allowed Matrix senders to the session that
+claude-agent run holds, and texts back each turn's final answer and command
+results, with a typing indicator while a turn runs. claude-agent run starts
+it when CLAUDE_AGENT_MATRIX_HOMESERVER is set.
 
 %package trentina
 Summary:        Crunchtools agent policy for claude-agent
@@ -48,9 +60,13 @@ cp -a %{stage}/. %{buildroot}/
 %dir /usr/libexec/claude-agent
 /usr/libexec/claude-agent/hooks.py
 /usr/libexec/claude-agent/allow-hook.sh
+/usr/libexec/claude-agent/supervisor.py
 %dir /etc/claude-code
 %dir /etc/claude-code/managed-settings.d
 %config(noreplace) /etc/claude-code/managed-settings.d/10-claude-agent.json
+
+%files matrix
+/usr/libexec/claude-agent/matrix-bridge.py
 
 %files trentina
 /usr/libexec/claude-agent/deny-local-memory.sh
