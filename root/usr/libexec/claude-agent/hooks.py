@@ -128,10 +128,11 @@ def prune(directory: Path, pattern: str, days: float) -> None:
     cutoff = time.time() - days * 86400
     for path in directory.glob(pattern):
         try:
-            if path.stat().st_mtime < cutoff:
-                path.unlink()
-        except OSError:
-            pass
+            stale = path.stat().st_mtime < cutoff
+        except FileNotFoundError:
+            stale = False  # another session's prune got there first
+        if stale:
+            path.unlink(missing_ok=True)
 
 
 def append(record: dict[str, Any]) -> None:
