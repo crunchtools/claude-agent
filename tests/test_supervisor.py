@@ -270,5 +270,44 @@ class ResultsTest(unittest.TestCase):
                                          "texts": ["No result from /fast within 1 min."]}])
 
 
+class SendTest(unittest.TestCase):
+    """A client that cannot take a whole message is dropped, never waited on."""
+
+    class Client:
+        def __init__(self, takes: int | None) -> None:
+            self.takes = takes  # bytes accepted per send; None raises
+            self.closed = False
+
+        def send(self, payload: bytes) -> int:
+            if self.takes is None:
+                raise BlockingIOError
+            return min(self.takes, len(payload))
+
+        def fileno(self) -> int:
+            return -1
+
+        def close(self) -> None:
+            self.closed = True
+
+    def setUp(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        self.supervisor = module["Supervisor"](["claude"], Path("/nonexistent/control.sock"))
+
+    def check(self, takes: int | None, dropped: bool) -> None:
+        client = self.Client(takes)
+        self.supervisor.subscribers.append(client)
+        self.supervisor.emit({"event": "busy"})
+        self.assertEqual(client.closed, dropped)
+        self.assertEqual(client in self.supervisor.subscribers, not dropped)
+
+    def test_a_whole_write_keeps_the_client(self) -> None:
+        self.check(takes=1 << 20, dropped=False)
+
+    def test_a_short_write_drops_it(self) -> None:
+        self.check(takes=3, dropped=True)
+
+    def test_a_full_buffer_drops_it(self) -> None:
+        self.check(takes=None, dropped=True)
+
 if __name__ == "__main__":
     unittest.main()
