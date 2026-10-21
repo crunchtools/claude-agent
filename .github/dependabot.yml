@@ -1,0 +1,24 @@
+# Dependabot config. See constitution.md Section XV.
+#
+# The repo has no language-level manifest: root/ is stdlib Python and shell,
+# installed as-is. The Containerfile's base image and the workflows' `uses:`
+# pins are what go stale silently.
+
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "crunchtools/constitution*"

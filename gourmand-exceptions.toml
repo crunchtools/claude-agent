@@ -1,0 +1,32 @@
+# Gourmand exceptions. Each entry is a finding reviewed by hand and kept on
+# purpose; the justification says why.
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "root/usr/libexec/claude-agent/hooks.py"
+justification = "root/ is the package install tree (packaging/files.txt maps each file to its package), so a file's path here is its install path. hooks.py is the breaker and audit hook that the managed-settings fragment runs on every tool call, installed under libexec because nothing calls it by hand. Documented in docs/hooks.md; covered by tests/test_hooks.py."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "root/usr/libexec/claude-agent/allow-hook.sh"
+justification = "Installed by the claude-agent package as the prompts-off hook that the managed-settings fragment runs on PreToolUse and PermissionRequest. Documented in docs/hooks.md; covered by tests/test_shell_hooks.py."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "root/usr/libexec/claude-agent/deny-local-memory.sh"
+justification = "Installed by the claude-agent-trentina package as the PreToolUse hook that keeps Claude Code's file-based memory empty. Documented in docs/policy.md; covered by tests/test_shell_hooks.py."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH009-random_scripts"
+path = "packaging/stage.sh"
+justification = "The one place that turns root/ into a package's install tree, from packaging/files.txt. packages.yml runs it for the rpm and the debs, and tests/test_packaging.py runs it to check modes and contents."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "root/usr/libexec/claude-agent/hooks.py"
+justification = "CLAUDE_AGENT, CLAUDE_AGENT_AUDIT_DIR and CLAUDE_AGENT_BREAKER_DIR are the hooks' documented interface, listed with their defaults in docs/hooks.md and the module docstring. A hook receives nothing from Claude Code but the event on stdin and its command line, which is fixed in managed settings, so the environment is the only per-deployment channel."
+classification = "by_design"

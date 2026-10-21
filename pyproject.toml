@@ -1,0 +1,16 @@
+# Lint config for the hooks, the CLI and their tests. This repo is not a
+# Python package: root/ is installed as-is by the RPM and deb packages.
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "C90", "PLR"]
+
+[tool.ruff.lint.pylint]
+max-branches = 10
+max-statements = 50
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10

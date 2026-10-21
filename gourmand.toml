@@ -1,0 +1,2 @@
+# Gourmand configuration. Gourmand only loads gourmand-exceptions.toml when
+# this file exists; ignored paths come from .gitignore.

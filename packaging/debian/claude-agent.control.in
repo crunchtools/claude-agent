@@ -1,0 +1,13 @@
+Package: claude-agent
+Version: @VERSION@-1
+Architecture: all
+Maintainer: crunchtools <scott.mccarty@crunchtools.com>
+Depends: claude-code, python3 (>= 3.9), bash, jq
+Section: admin
+Priority: optional
+Homepage: https://github.com/crunchtools/claude-agent
+Description: run Claude Code as an unattended agent
+ claude-agent ships the hooks an unattended Claude Code session needs:
+ circuit breakers that halt a conversation that has run away, an audit
+ record of every tool call, and an opt-in hook that answers permission
+ prompts. The hooks act only in sessions started with CLAUDE_AGENT=1.
