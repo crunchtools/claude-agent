@@ -179,6 +179,13 @@ class SupervisorTest(unittest.TestCase):
         self.assertTrue(self.request(op="submit", text="y" * 20000)["ok"])
         self.assertFalse(self.request(op="submit", text="z")["ok"])
 
+    def test_waiting_commands_are_bounded(self) -> None:
+        self.request(op="submit", text="slow 5")
+        self.events.until("busy")
+        replies = [self.request(op="command", line="/fast on") for _ in range(21)]
+        self.assertTrue(all(reply["ok"] for reply in replies[:20]))
+        self.assertFalse(replies[20]["ok"])
+
     def test_exits_with_claudes_status(self) -> None:
         self.request(op="submit", text="exit")
         self.assertEqual(self.events.until("exited")[-1]["status"], 3)

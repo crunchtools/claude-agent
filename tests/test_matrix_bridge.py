@@ -318,6 +318,12 @@ class MatrixBridgeTest(unittest.TestCase):
                          [("POST", "/_matrix/client/v3/join/%21new%3Aexample.org")])
 
 
+class AllowlistTest(unittest.TestCase):
+    def test_bridge_and_supervisor_allow_the_same_commands(self) -> None:
+        bridge = runpy.run_path(str(BRIDGE))["COMMANDS"]
+        supervisor = runpy.run_path(str(BRIDGE.parent / "supervisor.py"))["COMMANDS"]
+        self.assertEqual({name: pattern for name, (pattern, _) in bridge.items()}, supervisor)
+
 class PlaintextTest(unittest.TestCase):
     """When the access token would cross a network unencrypted."""
 

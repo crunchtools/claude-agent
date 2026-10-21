@@ -444,6 +444,8 @@ class Supervisor:
         line = " ".join(line.split())
         if not allowed_command(line):
             return {"ok": False, "error": "not an allowed command"}
+        if len(self.commands) >= MAX_HELD_TEXTS:
+            return {"ok": False, "error": "too many commands are already waiting; /stop or wait"}
         self.commands.append(line)
         self.drain()
         return {"ok": True}
@@ -548,12 +550,13 @@ class Supervisor:
         self.send_raw(client, json.dumps(message).encode() + b"\n")
 
     def send_raw(self, client: socket.socket, payload: bytes) -> None:
+        """Send without blocking the loop. A client too slow to take it is dropped;
+        the bridge reconnects, and a viewer attaches again."""
         try:
-            client.setblocking(True)
-            client.settimeout(1.0)
-            client.sendall(payload)
-            client.setblocking(False)
+            sent = client.send(payload)
         except OSError:
+            sent = -1
+        if sent != len(payload):
             self.drop(client)
 
     def drop(self, client: socket.socket) -> None:
