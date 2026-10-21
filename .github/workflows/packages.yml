@@ -1,0 +1,215 @@
+name: Native Packages
+
+# Builds the .rpm and .deb packages, installs them with Anthropic's
+# claude-code in a container of every distro they target, builds the
+# reference Containerfile from them, and on a release attaches them to it.
+# The signed dnf and apt repositories are built from those release assets by
+# crunchtools/packages.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' root/usr/bin/claude-agent)
+          if [ "$GITHUB_EVENT_NAME" = release ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::release tag $GITHUB_REF_NAME does not match claude-agent VERSION $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the trees
+        run: |
+          for package in all claude-agent claude-agent-trentina; do
+            packaging/stage.sh "$package" "stage/$package"
+          done
+          # Artifacts drop file modes; a tarball keeps them.
+          tar -C stage -czf stage.tar.gz .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage
+          path: stage.tar.gz
+
+  rpm:
+    needs: stage
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    env:
+      VERSION: ${{ needs.stage.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage
+
+      - name: Build the rpms
+        run: |
+          dnf install -y rpm-build
+          mkdir stage
+          tar -C stage -xzf stage.tar.gz
+          rpmbuild -bb --define "pkg_version $VERSION" --define "stage $PWD/stage/all" \
+            --define "_rpmdir $PWD/out" packaging/claude-agent.spec
+          mv out/noarch/*.rpm .
+          for rpm in ./claude-agent*.rpm; do rpm -qpl --requires "$rpm"; done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpm
+          path: claude-agent*.rpm
+
+  deb:
+    needs: stage
+    runs-on: ubuntu-latest
+    container: debian:12
+    env:
+      VERSION: ${{ needs.stage.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage
+
+      - name: Build the debs
+        run: |
+          mkdir stage
+          tar -C stage -xzf stage.tar.gz
+          for package in claude-agent claude-agent-trentina; do
+            pkg="stage/$package"
+            mkdir -p "$pkg/DEBIAN"
+            install -Dm0644 LICENSE "$pkg/usr/share/doc/$package/copyright"
+            sed "s/@VERSION@/$VERSION/g" "packaging/debian/$package.control.in" > "$pkg/DEBIAN/control"
+            echo "Installed-Size: $(du -sk "$pkg/usr" | cut -f1)" >> "$pkg/DEBIAN/control"
+            install -m0644 "packaging/debian/$package.conffiles" "$pkg/DEBIAN/conffiles"
+            dpkg-deb -Zxz --root-owner-group --build "$pkg" "${package}_${VERSION}-1_all.deb"
+            dpkg-deb --info "${package}_${VERSION}-1_all.deb"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb
+          path: claude-agent*.deb
+
+  smoke:
+    needs: [stage, rpm, deb]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "registry.access.redhat.com/ubi9/ubi", kind: rpm }
+          - { image: "registry.access.redhat.com/ubi10/ubi", kind: rpm }
+          - { image: "fedora:latest", kind: rpm }
+          # Hummingbird images run as a non-root user; packages install as root.
+          - { image: "quay.io/hummingbird/python:latest-builder", kind: rpm, options: "--user 0" }
+          - { image: "debian:12", kind: deb }
+          - { image: "debian:13", kind: deb }
+          - { image: "ubuntu:24.04", kind: deb }
+          - { image: "ubuntu:26.04", kind: deb }
+    container:
+      image: ${{ matrix.image }}
+      options: ${{ matrix.options || '' }}
+    env:
+      VERSION: ${{ needs.stage.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.kind }}
+
+      - name: Add Anthropic's claude-code repository and install
+        run: |
+          if [ "${{ matrix.kind }}" = deb ]; then
+            apt-get update
+            apt-get install -y ca-certificates curl
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL -o /etc/apt/keyrings/claude-code.asc https://downloads.claude.ai/keys/claude-code.asc
+            echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
+              > /etc/apt/sources.list.d/claude-code.list
+            apt-get update
+            apt-get install -y ./claude-agent_*.deb ./claude-agent-trentina_*.deb
+          else
+            printf '%s\n' '[claude-code]' 'name=Claude Code' \
+              'baseurl=https://downloads.claude.ai/claude-code/rpm/stable' \
+              'enabled=1' 'gpgcheck=1' 'gpgkey=https://downloads.claude.ai/keys/claude-code.asc' \
+              > /etc/yum.repos.d/claude-code.repo
+            dnf install -y ./claude-agent-*.rpm
+          fi
+
+      - name: Run claude-agent
+        run: |
+          test "$(claude-agent --version)" = "claude-agent $VERSION"
+          CLAUDE_AGENT=1 claude-agent status
+          # The breaker trips on the sixth identical call, as installed.
+          event='{"session_id":"smoke","tool_name":"Bash","tool_input":{"command":"ls"}}'
+          export CLAUDE_AGENT=1 CLAUDE_AGENT_BREAKER_DIR=/tmp/breaker CLAUDE_AGENT_AUDIT_DIR=/tmp/audit
+          for _ in 1 2 3 4 5; do
+            test -z "$(echo "$event" | /usr/libexec/claude-agent/hooks.py breaker)"
+          done
+          echo "$event" | /usr/libexec/claude-agent/hooks.py breaker | grep -q '"permissionDecision": "deny"'
+          grep -q breaker_tripped /tmp/audit/audit-*.jsonl
+          # Audit writes a line per call.
+          echo "$event" | /usr/libexec/claude-agent/hooks.py audit
+          test "$(grep -c '"tool":"Bash"' /tmp/audit/audit-*.jsonl)" -ge 2
+          # Prompts off answers only when asked to.
+          test -z "$(echo "$event" | /usr/libexec/claude-agent/allow-hook.sh)"
+          echo "$event" | CLAUDE_AGENT_ANSWER_PERMISSIONS=1 /usr/libexec/claude-agent/allow-hook.sh |
+            grep -q '"permissionDecision":"allow"'
+          # The memory guard refuses a write into Claude Code's file memory.
+          echo '{"tool_name":"Write","tool_input":{"file_path":"/home/a/.claude/projects/p/memory/x.md"}}' |
+            /usr/libexec/claude-agent/deny-local-memory.sh | grep -q '"permissionDecision":"deny"'
+
+  image:
+    needs: rpm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: rpm
+          path: rpms
+
+      - name: Build the reference image from these packages
+        run: |
+          podman build -t localhost/claude-agent-reference .
+          podman run --rm localhost/claude-agent-reference
+
+  attach:
+    if: github.event_name == 'release'
+    needs: [smoke, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{rpm,deb}"
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum claude-agent*.rpm claude-agent*.deb > SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" claude-agent*.rpm claude-agent*.deb SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --clobber

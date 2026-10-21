@@ -1,0 +1,10 @@
+# Which package ships each file under root/. One line per file:
+#   <package> <mode> <install path>
+# stage.sh reads this, claude-agent.spec's %files must agree, and
+# tests/test_packaging.py holds the three together.
+claude-agent          0755 /usr/bin/claude-agent
+claude-agent          0755 /usr/libexec/claude-agent/hooks.py
+claude-agent          0755 /usr/libexec/claude-agent/allow-hook.sh
+claude-agent          0644 /etc/claude-code/managed-settings.d/10-claude-agent.json
+claude-agent-trentina 0755 /usr/libexec/claude-agent/deny-local-memory.sh
+claude-agent-trentina 0644 /etc/claude-code/managed-settings.d/20-claude-agent-trentina.json

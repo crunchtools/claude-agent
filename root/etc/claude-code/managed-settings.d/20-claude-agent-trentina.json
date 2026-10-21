@@ -1,0 +1,26 @@
+{
+  "allowedMcpServers": [
+    {"serverName": "trentina"}
+  ],
+  "disableClaudeAiConnectors": true,
+  "allowManagedHooksOnly": true,
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "deny": ["WebSearch", "WebFetch"]
+  },
+  "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+    "DISABLE_ERROR_REPORTING": "1"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {"type": "command", "command": "/usr/libexec/claude-agent/deny-local-memory.sh", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}

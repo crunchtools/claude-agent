@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "/usr/libexec/claude-agent/hooks.py breaker", "timeout": 10},
+          {"type": "command", "command": "/usr/libexec/claude-agent/allow-hook.sh", "timeout": 10}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "/usr/libexec/claude-agent/hooks.py audit", "timeout": 10}
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "/usr/libexec/claude-agent/allow-hook.sh", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}
