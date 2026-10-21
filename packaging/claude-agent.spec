@@ -56,6 +56,7 @@ cp -a %{stage}/. %{buildroot}/
 %license /usr/share/licenses/claude-agent/LICENSE
 %doc /usr/share/doc/claude-agent/README.md
 %doc /usr/share/doc/claude-agent/CHANGELOG.md
+%doc /usr/share/doc/claude-agent/examples
 /usr/bin/claude-agent
 %dir /usr/libexec/claude-agent
 /usr/libexec/claude-agent/hooks.py

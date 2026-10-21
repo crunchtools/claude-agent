@@ -1,0 +1,18 @@
+# An agent image on UBI 10: Claude Code plus claude-agent.
+#   podman build -f Containerfile.ubi -t my-agent .
+FROM registry.access.redhat.com/ubi10/ubi:latest
+
+RUN printf '%s\n' '[claude-code]' 'name=Claude Code' \
+        'baseurl=https://downloads.claude.ai/claude-code/rpm/stable' \
+        'enabled=1' 'gpgcheck=1' 'gpgkey=https://downloads.claude.ai/keys/claude-code.asc' \
+        > /etc/yum.repos.d/claude-code.repo && \
+    curl -fsSL -o /etc/yum.repos.d/crunchtools.repo \
+        https://crunchtools.github.io/packages/rpm/crunchtools.repo && \
+    dnf install -y --nodocs claude-agent claude-agent-matrix && \
+    dnf clean all
+
+RUN useradd --uid 1000 --create-home agent
+ENV CLAUDE_AGENT=1
+USER 1000
+WORKDIR /home/agent
+CMD ["claude-agent", "run"]

@@ -1,0 +1,20 @@
+# An agent image on Debian 13: Claude Code plus claude-agent.
+#   podman build -f Containerfile.debian -t my-agent .
+FROM docker.io/library/debian:13
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    curl -fsSL -o /etc/apt/keyrings/claude-code.asc https://downloads.claude.ai/keys/claude-code.asc && \
+    echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
+        > /etc/apt/sources.list.d/claude-code.list && \
+    curl -fsSL -o /etc/apt/keyrings/crunchtools.asc https://crunchtools.github.io/packages/crunchtools.asc && \
+    curl -fsSL -o /etc/apt/sources.list.d/crunchtools.sources \
+        https://crunchtools.github.io/packages/deb/crunchtools.sources && \
+    apt-get update && apt-get install -y --no-install-recommends claude-agent claude-agent-matrix && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd --uid 1000 --create-home agent
+ENV CLAUDE_AGENT=1
+USER 1000
+WORKDIR /home/agent
+CMD ["claude-agent", "run"]

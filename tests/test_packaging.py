@@ -81,6 +81,8 @@ class PackagingTest(unittest.TestCase):
             subprocess.run([str(TOP / "packaging/stage.sh"), "claude-agent", dest], check=True)
             self.assertTrue((Path(dest) / "usr/share/licenses/claude-agent/LICENSE").is_file())
             self.assertTrue((Path(dest) / "usr/share/doc/claude-agent/CHANGELOG.md").is_file())
+            examples = sorted(p.name for p in (Path(dest) / "usr/share/doc/claude-agent/examples").iterdir())
+            self.assertEqual(examples, sorted(p.name for p in (TOP / "examples").iterdir()))
 
     def test_cli_version_has_a_changelog_entry(self) -> None:
         version = re.search(r'^VERSION = "([^"]+)"', (TOP / "root/usr/bin/claude-agent").read_text(), re.M)[1]

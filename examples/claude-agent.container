@@ -1,0 +1,30 @@
+# Run an agent image as a systemd service with Podman Quadlet.
+#   cp claude-agent.container ~/.config/containers/systemd/
+#   claude setup-token        # prints a token; save it to ./oauth-token
+#   podman secret create claude-oauth-token ./oauth-token
+#   podman secret create matrix-token ./token      # only with the bridge
+#   systemctl --user daemon-reload && systemctl --user start claude-agent
+# First start only: answer Claude Code's first-run and folder-trust questions
+# with `podman exec -it claude-agent claude-agent attach --rw` (Ctrl-] leaves).
+# The home volume keeps the answers.
+# Talk to it: podman exec claude-agent claude-agent send --wait "hello"
+[Unit]
+Description=Claude Code agent
+
+[Container]
+ContainerName=claude-agent
+Image=localhost/my-agent:latest
+Volume=claude-agent-home:/home/agent
+Secret=claude-oauth-token,type=env,target=CLAUDE_CODE_OAUTH_TOKEN
+# Uncomment to reach the agent by Matrix text.
+# Secret=matrix-token,target=/run/secrets/matrix-token
+# Environment=CLAUDE_AGENT_MATRIX_HOMESERVER=https://matrix.example.net
+# Environment=CLAUDE_AGENT_MATRIX_TOKEN_FILE=/run/secrets/matrix-token
+# Environment=CLAUDE_AGENT_MATRIX_ALLOW=@alice:example.org
+Exec=claude-agent run -- --permission-mode acceptEdits
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

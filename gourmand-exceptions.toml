@@ -4,13 +4,13 @@
 [[exceptions]]
 check = "CH009-random_scripts"
 path = "root/usr/libexec/claude-agent/hooks.py"
-justification = "root/ is the package install tree (packaging/files.txt maps each file to its package), so a file's path here is its install path. hooks.py is the breaker and audit hook that the managed-settings fragment runs on every tool call, installed under libexec because nothing calls it by hand. Documented in docs/hooks.md; covered by tests/test_hooks.py."
+justification = "root/ is the package install tree (packaging/files.txt maps each file to its package), so a file's path here is its install path. hooks.py is the breaker and audit hook that the managed-settings fragment runs on every tool call, installed under libexec because nothing calls it by hand. Documented in docs/controls.md; covered by tests/test_hooks.py."
 classification = "by_design"
 
 [[exceptions]]
 check = "CH009-random_scripts"
 path = "root/usr/libexec/claude-agent/allow-hook.sh"
-justification = "Installed by the claude-agent package as the prompts-off hook that the managed-settings fragment runs on PreToolUse and PermissionRequest. Documented in docs/hooks.md; covered by tests/test_shell_hooks.py."
+justification = "Installed by the claude-agent package as the prompts-off hook that the managed-settings fragment runs on PreToolUse and PermissionRequest. Documented in docs/controls.md; covered by tests/test_shell_hooks.py."
 classification = "by_design"
 
 [[exceptions]]

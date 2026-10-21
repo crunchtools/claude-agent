@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-21
+
+The stable interface: the `claude-agent` subcommands and their options, the
+control socket's ops and events, the `CLAUDE_AGENT_*` variables, and the
+`managed-settings.d` file names. A breaking change to any of them is a major
+release.
+
+### Added
+- `examples/`: Containerfiles for UBI, Debian and Hummingbird, and a Quadlet
+  unit, installed to `/usr/share/doc/claude-agent/examples/`. CI builds each
+  from the published repositories.
+
+### Changed
+- Docs cut to three pages: `install.md`, `run.md` (was `supervisor.md` and
+  `matrix.md`) and `controls.md` (was `hooks.md` and `policy.md`).
+
 ## [0.2.1] - 2026-10-21
 
 ### Fixed

@@ -196,6 +196,29 @@ jobs:
           podman build -t localhost/claude-agent-reference .
           podman run --rm localhost/claude-agent-reference
 
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [ubi, debian, hummingbird]
+    steps:
+      - uses: actions/checkout@v7
+
+      # The examples install from the published repositories, as a user's
+      # build does; the smoke job covers the packages built here.
+      - name: Build examples/Containerfile.${{ matrix.example }}
+        run: |
+          podman build -f examples/Containerfile.${{ matrix.example }} -t localhost/example .
+          podman run --rm localhost/example claude-agent status
+
+      - name: Check the Quadlet unit
+        if: matrix.example == 'ubi'
+        run: |
+          mkdir -p ~/.config/containers/systemd
+          cp examples/claude-agent.container ~/.config/containers/systemd/
+          /usr/libexec/podman/quadlet -dryrun -user
+
   attach:
     if: github.event_name == 'release'
     needs: [smoke, image]
