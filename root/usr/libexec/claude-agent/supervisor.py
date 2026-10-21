@@ -560,11 +560,14 @@ class Supervisor:
             self.drop(client)
 
     def drop(self, client: socket.socket) -> None:
+        # Registered with the selector exactly when it has a buffer; a closed
+        # socket's fileno is -1, which the selector cannot look up.
+        registered = client in self.buffers
         self.attached.pop(client, None)
         self.buffers.pop(client, None)
         if client in self.subscribers:
             self.subscribers.remove(client)
-        if client.fileno() in self.selector.get_map():
+        if registered:
             self.selector.unregister(client)
         client.close()
 
