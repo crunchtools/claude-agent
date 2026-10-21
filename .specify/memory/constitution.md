@@ -1,7 +1,7 @@
 # claude-agent Constitution
 
-> **Version:** 1.0.0
-> **Ratified:** 2026-10-20
+> **Version:** 1.1.0
+> **Ratified:** 2026-10-21
 > **Status:** Active
 > **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.26.0
 > **Profile:** Autonomous Agent
@@ -42,7 +42,9 @@ Packages carry no binaries: stdlib Python and shell, installed as-is.
 Claude Code comes from Anthropic's signed repositories and is never vendored.
 Packages are published only as release assets, signed and served by
 crunchtools/packages. The root `Containerfile` is a reference built in CI from
-the packages under test; it is not published.
+the packages under test; it is not published. The `examples/` Containerfiles
+(UBI, Debian, Hummingbird) and Quadlet unit ship in the core package's docs;
+CI builds each from the published repositories on every change.
 
 ## Layer 4 — Runtime Security & Behavioral Controls
 
