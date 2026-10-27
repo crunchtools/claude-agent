@@ -3,7 +3,7 @@
 > **Version:** 1.1.0
 > **Ratified:** 2026-10-21
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.26.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.27.0
 > **Profile:** Autonomous Agent
 
 claude-agent is the runtime an autonomous Claude Code agent is built from,
