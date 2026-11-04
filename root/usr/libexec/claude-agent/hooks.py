@@ -138,11 +138,32 @@ def prune(directory: Path, pattern: str, days: float) -> None:
             path.unlink(missing_ok=True)
 
 
+def _tighten(path: Path, mode: int) -> None:
+    """Drop permission bits an older install may have left behind.
+
+    Only bits are removed, never added, so a deliberately tighter mode is left
+    alone. A chmod that fails is not worth losing an audit line over -- the
+    record matters more than the mode -- so it is best effort.
+    """
+    try:
+        current = path.stat().st_mode & 0o777
+        if current & ~mode:
+            path.chmod(current & mode)
+    except OSError:
+        pass
+
+
 def append(record: dict[str, Any]) -> None:
     directory = audit_dir()
     # 0o700 like the breaker directory below. This one was taking the default,
     # so the audit log sat in a directory group and other could traverse.
+    #
+    # `mode=` only applies when mkdir CREATES the directory, and the `0o600` on
+    # the open() below only applies when it creates the file -- so on an upgrade
+    # an existing audit directory would keep 0o755 and existing logs 0o640, and
+    # the tightening would silently apply to new installs only. chmod both.
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _tighten(directory, 0o700)
     line = json.dumps(record, separators=(",", ":"), default=str) + "\n"
     path = directory / f"audit-{record['timestamp'][:10]}.jsonl"
     if not path.exists():
@@ -155,6 +176,7 @@ def append(record: dict[str, Any]) -> None:
     # (py/overly-permissive-file) and was right -- nothing reads this as a
     # group, and the directory is owner-only now too.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    _tighten(path, 0o600)
     try:
         os.write(fd, line.encode())
     finally:

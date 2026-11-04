@@ -48,6 +48,34 @@ class AuditTest(unittest.TestCase):
         self.dir = Path(tmp.name)
         self.env = {"CLAUDE_AGENT_AUDIT_DIR": tmp.name}
 
+    def test_audit_log_and_directory_are_owner_only(self) -> None:
+        """The record of what the agent did is not group or world readable."""
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
+                 "tool_response": {}}
+        self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
+        (log,) = sorted(self.dir.glob("audit-*.jsonl"))
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.dir.stat().st_mode & 0o777, 0o700)
+
+    def test_permissions_are_tightened_on_an_existing_directory(self) -> None:
+        """An upgrade has to fix what an older install left behind.
+
+        `mkdir(mode=...)` and `os.open(..., mode)` only apply on creation, so
+        without the chmod this passes on a fresh install and does nothing for
+        anyone who already had an audit log.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir.chmod(0o755)
+        stale = self.dir / "audit-2020-01-01.jsonl"
+        stale.write_text("{}\n")
+        stale.chmod(0o644)
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
+                 "tool_response": {}}
+        self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
+        self.assertEqual(self.dir.stat().st_mode & 0o777, 0o700)
+        (fresh,) = [p for p in self.dir.glob("audit-*.jsonl") if p != stale]
+        self.assertEqual(fresh.stat().st_mode & 0o777, 0o600)
+
     def test_record_has_the_profile_fields(self) -> None:
         event = {
             "session_id": "abc",
