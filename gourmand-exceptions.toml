@@ -77,3 +77,20 @@ path = ".pre-commit-config.yaml"
 pattern = "ruff-check"
 justification = "ruff runs inside the sdlc-commit hook from python-sdlc (constitution XII v1.30.0), configured by [tool.ruff] in pyproject.toml; Gourmand looks for a literal ruff hook id"
 classification = "by_design"
+
+# _tighten() reports and continues, and both halves are deliberate.
+#
+# It must not raise: this runs on the audit write path, and an audit record is
+# worth more than its permission bits -- failing the hook over a chmod would
+# lose the record we are trying to protect. It must not be silent either: a
+# permission we believe we set and did not is precisely what should never pass
+# unnoticed, which is the whole point of the change that added it.
+#
+# Gourmand's EV004 accepts neither "pass" nor "print and continue". There is no
+# third option here that is better than this one.
+[[exceptions]]
+check = "EV004-redundant_error_handling"
+path = "root/usr/libexec/claude-agent/hooks.py"
+pattern = "could not tighten"
+justification = "Reporting and continuing is the correct behaviour on the audit write path: raising would lose an audit record over a permission bit, and swallowing would hide a security property we failed to set. The handler prints to stderr, which is how this module already reports the breaker and event failures below it."
+classification = "by_design"

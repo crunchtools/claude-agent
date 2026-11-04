@@ -6,7 +6,13 @@
 [project]
 name = "claude-agent"
 version = "0"
-requires-python = ">=3.9"
+# >=3.10, not >=3.9, and this constrains NOTHING about what the packages
+# support: this [project] table exists only so `uv lock` can pin the gate's own
+# tools, and the gate runs the image's 3.14. The real compatibility statement is
+# `target-version = "py39"` under [tool.ruff], which is what checks the shipped
+# code against the oldest interpreter the RPM and deb support. Claiming >=3.9
+# here only made uv resolve dev tools against an EOL interpreter.
+requires-python = ">=3.10"
 dependencies = []
 
 [tool.uv]

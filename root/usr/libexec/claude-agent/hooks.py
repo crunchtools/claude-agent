@@ -149,8 +149,11 @@ def _tighten(path: Path, mode: int) -> None:
         current = path.stat().st_mode & 0o777
         if current & ~mode:
             path.chmod(current & mode)
-    except OSError:
-        pass
+    except OSError as exc:
+        # Not swallowed: an audit record is worth more than its mode, so this
+        # does not raise -- but a permission we believe we set and did not is
+        # exactly the thing that must not pass in silence.
+        print(f"hooks.py audit: could not tighten {path}: {exc!r}", file=sys.stderr)
 
 
 def append(record: dict[str, Any]) -> None:
