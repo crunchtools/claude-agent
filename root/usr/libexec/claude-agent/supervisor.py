@@ -86,9 +86,17 @@ DIALOG_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
 # Variables a parent Claude Code session sets for its children. Inherited, they
 # turn off the transcript and confuse the session about what it is.
 PARENT_MARKERS = (
-    "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_BRIDGE_SESSION_ID",
-    "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
 )
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
@@ -127,8 +135,10 @@ def answer(name: str, output: str, compacted: dict | None, summary: str | None) 
     """The texts that report a built-in command's output."""
     output = screen_text(output.encode()).strip()
     if name == "compact" and compacted is not None:
-        texts = [f"Compacted {compacted.get('preTokens', 0):,} → {compacted.get('postTokens', 0):,} tokens"
-                 f" in {round(compacted.get('durationMs', 0) / 1000)}s."]
+        texts = [
+            f"Compacted {compacted.get('preTokens', 0):,} → {compacted.get('postTokens', 0):,} tokens"
+            f" in {round(compacted.get('durationMs', 0) / 1000)}s."
+        ]
         body = (summary or "").partition("Summary:")[2].strip() or (summary or "")
         if len(body) > SUMMARY_CHARS:
             body = body[:SUMMARY_CHARS].rstrip() + f"… (trimmed, {len(body):,} chars)"
@@ -168,8 +178,15 @@ class Results:
     def expect(self, name: str) -> None:
         if not self.pending:
             self.offset = self.size()
-        self.pending.append({"name": name, "deadline": time.monotonic() + self.timeout,
-                             "seen": False, "compacted": None, "summary": None})
+        self.pending.append(
+            {
+                "name": name,
+                "deadline": time.monotonic() + self.timeout,
+                "seen": False,
+                "compacted": None,
+                "summary": None,
+            }
+        )
 
     def records(self) -> list[dict]:
         if not self.path:
@@ -180,7 +197,7 @@ class Results:
                 appended = transcript.read()
         except OSError:
             return []
-        appended = appended[:appended.rfind(b"\n") + 1]
+        appended = appended[: appended.rfind(b"\n") + 1]
         self.offset += len(appended)
         found = []
         for line in appended.splitlines():
@@ -201,8 +218,13 @@ class Results:
         for item in [p for p in self.pending if p["deadline"] < now]:
             self.pending.remove(item)
             minutes = max(1, round(self.timeout / 60))
-            self.emit({"event": "result", "command": item["name"],
-                       "texts": [f"No result from /{item['name']} within {minutes} min."]})
+            self.emit(
+                {
+                    "event": "result",
+                    "command": item["name"],
+                    "texts": [f"No result from /{item['name']} within {minutes} min."],
+                }
+            )
 
     def consider(self, record: dict) -> None:
         message = record.get("message")
@@ -217,13 +239,15 @@ class Results:
             return
         run = record.get("commandRun") or {}
         for item in self.pending:
-            if not item["seen"] and (run.get("command") == item["name"]
-                                     or f"<command-name>/{item['name']}</command-name>" in text):
+            if not item["seen"] and (
+                run.get("command") == item["name"] or f"<command-name>/{item['name']}</command-name>" in text
+            ):
                 item["seen"] = True
                 break
         output = OUTPUT.search(text)
-        item = next((p for p in self.pending if p["seen"]), None)
-        if output and item:
+        seen = next((p for p in self.pending if p["seen"]), None)
+        if output and seen:
+            item = seen
             self.pending.remove(item)
             texts = answer(item["name"], output[2], item["compacted"], item["summary"])
             self.emit({"event": "result", "command": item["name"], "texts": texts})
@@ -318,7 +342,12 @@ class Supervisor:
             # Its default is "No, exit"; the mode was asked for on the command line.
             self.answered.add("bypass")
             self.screen = b""
-            self.later(1.0, lambda: (self.write(DOWN), self.later(0.5, lambda: self.write(ENTER))))
+
+            def accept_bypass() -> None:
+                self.write(DOWN)
+                self.later(0.5, lambda: self.write(ENTER))
+
+            self.later(1.0, accept_bypass)
             log("accepted bypass permissions mode")
 
     def reap(self) -> None:
@@ -369,8 +398,13 @@ class Supervisor:
     def on_notification(self, event: dict) -> None:
         # A question already reported needs no "Claude needs your permission".
         if not self.dialog:
-            self.emit({"event": "notice", "text": str(event.get("message", "")),
-                       "type": event.get("notification_type")})
+            self.emit(
+                {
+                    "event": "notice",
+                    "text": str(event.get("message", "")),
+                    "type": event.get("notification_type"),
+                }
+            )
 
     def busy(self) -> None:
         if self.state != "busy":
@@ -484,8 +518,14 @@ class Supervisor:
         return op() if op else {"ok": False, "error": f"unknown op {request.get('op')!r}"}
 
     def describe(self) -> dict:
-        return {"ok": True, "state": self.state, "held": len(self.held), "dialog": self.dialog,
-                "session": self.session, "pid": self.pid}
+        return {
+            "ok": True,
+            "state": self.state,
+            "held": len(self.held),
+            "dialog": self.dialog,
+            "session": self.session,
+            "pid": self.pid,
+        }
 
     def subscribe(self, client: socket.socket) -> None:
         self.subscribers.append(client)
@@ -601,8 +641,10 @@ def main(argv: list[str]) -> int:
     claude = os.environ.get("CLAUDE_AGENT_CLAUDE", "claude")
     sock = socket_path()
     if len(os.fsencode(sock)) > MAX_SOCKET_PATH:
-        log(f"the socket path {sock} is longer than a unix socket allows ({MAX_SOCKET_PATH} bytes); "
-            "set CLAUDE_AGENT_RUNTIME_DIR to a shorter directory")
+        log(
+            f"the socket path {sock} is longer than a unix socket allows ({MAX_SOCKET_PATH} bytes); "
+            "set CLAUDE_AGENT_RUNTIME_DIR to a shorter directory"
+        )
         return 1
     supervisor = Supervisor([claude, *argv[1:]], sock)
 

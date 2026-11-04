@@ -1,3 +1,20 @@
+# The [project] table exists so `uv lock` can pin the gate's own tools; this
+# repo is not a package in the Python sense, which is what `package = false`
+# says -- root/ is installed as-is by the RPM and deb packages. Without a
+# lockfile naming mypy and pytest the gate exits 2 (python-sdlc,
+# need_lock_dep) rather than reporting a pass it never ran.
+[project]
+name = "claude-agent"
+version = "0"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = ["mypy>=1.14", "pytest>=8.3"]
+
 # Lint config for the hooks, the CLI and their tests. This repo is not a
 # Python package: root/ is installed as-is by the RPM and deb packages.
 
@@ -15,3 +32,20 @@ max-statements = 50
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+# The SHIPPED code, by path -- not a package. tests/ is left out for now: the
+# type checker's first run here found 31 errors, 5 in the code that ships (all
+# fixed in this change) and 26 in the test suite -- real type mismatches, not
+# missing annotations, so they want reading rather than a blanket relaxation.
+# Fixing 26 of them inside a pull request about CI wiring would bury the wiring.
+# This is still strictly more than the nothing that was type-checked before.
+[tool.mypy]
+files = ["root/usr/libexec/claude-agent"]
+
+# unittest tests; pytest collects and runs them.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.sdlc.push]
+# No in-repo Semgrep rules: the check exits 2 when .semgrep is absent rather
+# than scanning nothing and calling it a pass.
+skip = ["semgrep"]

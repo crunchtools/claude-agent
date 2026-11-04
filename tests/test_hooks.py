@@ -232,20 +232,36 @@ class EventTest(unittest.TestCase):
             return json.loads(conn.makefile().readline())
 
     def test_stop_carries_the_final_answer_and_nothing_else(self) -> None:
-        message = self.received({
-            "hook_event_name": "Stop", "session_id": "s", "last_assistant_message": "Done.",
-            "transcript_path": "/t.jsonl", "cwd": "/home/a", "permission_mode": "default",
-        })
-        self.assertEqual(message, {"op": "event", "hook_event_name": "Stop", "session_id": "s",
-                                   "transcript_path": "/t.jsonl", "last_assistant_message": "Done."})
+        message = self.received(
+            {
+                "hook_event_name": "Stop",
+                "session_id": "s",
+                "last_assistant_message": "Done.",
+                "transcript_path": "/t.jsonl",
+                "cwd": "/home/a",
+                "permission_mode": "default",
+            }
+        )
+        self.assertEqual(
+            message,
+            {
+                "op": "event",
+                "hook_event_name": "Stop",
+                "session_id": "s",
+                "transcript_path": "/t.jsonl",
+                "last_assistant_message": "Done.",
+            },
+        )
 
     def test_only_a_dialog_tool_sends_its_input(self) -> None:
         question = {"questions": [{"question": "Which?"}]}
-        asked = self.received({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
-                               "tool_input": question})
+        asked = self.received(
+            {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": question}
+        )
         self.assertEqual(asked["tool_input"], question)
-        bash = self.received({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                              "tool_input": {"command": "cat secrets"}})
+        bash = self.received(
+            {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "cat secrets"}}
+        )
         self.assertNotIn("tool_input", bash)
 
     def test_no_socket_no_supervisor_nothing_sent(self) -> None:
@@ -269,8 +285,14 @@ class GateTest(unittest.TestCase):
             env.update(CLAUDE_AGENT_AUDIT_DIR=tmp, CLAUDE_AGENT_BREAKER_DIR=tmp, CLAUDE_AGENT_MAX_REPEAT="1")
             event = json.dumps({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}})
             for mode in ("breaker", "breaker", "audit"):
-                result = subprocess.run([sys.executable, str(HOOKS), mode], input=event,
-                                        capture_output=True, text=True, env=env, check=False)
+                result = subprocess.run(
+                    [sys.executable, str(HOOKS), mode],
+                    input=event,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
                 self.assertEqual((result.returncode, result.stdout), (0, ""))
             self.assertEqual(list(Path(tmp).iterdir()), [])
 

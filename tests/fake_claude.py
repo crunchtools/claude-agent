@@ -41,8 +41,12 @@ class Fake:
         self.transcript = Path()
 
     def hook(self, name: str, **fields: object) -> None:
-        event = {"hook_event_name": name, "session_id": self.session,
-                 "transcript_path": str(self.transcript), **fields}
+        event = {
+            "hook_event_name": name,
+            "session_id": self.session,
+            "transcript_path": str(self.transcript),
+            **fields,
+        }
         subprocess.run([sys.executable, str(HOOKS), "event"], input=json.dumps(event), text=True, check=False)
 
     def new_session(self, source: str) -> None:
@@ -65,9 +69,13 @@ class Fake:
             while read_key() != "\r":
                 pass
         output = {"effort": f"Set effort level to {args}", "fast": f"Fast mode {args.upper()}"}.get(name, "")
-        self.record({"type": "user", "message": {"content": f"<command-name>/{name}</command-name>"}},
-                    {"type": "user", "message": {"content":
-                        f"<local-command-stdout>{output}</local-command-stdout>"}})
+        self.record(
+            {"type": "user", "message": {"content": f"<command-name>/{name}</command-name>"}},
+            {
+                "type": "user",
+                "message": {"content": f"<local-command-stdout>{output}</local-command-stdout>"},
+            },
+        )
 
     def prompt(self, text: str) -> None:
         self.hook("UserPromptSubmit", prompt=text)
@@ -81,10 +89,14 @@ class Fake:
                     return
             self.hook("Stop", last_assistant_message="done")
         elif text == "ask":
-            self.hook("PreToolUse", tool_name="AskUserQuestion",
-                      tool_input={"questions": [{"question": "Which?", "options": [{"label": "A"}]}]})
-            self.hook("Notification", notification_type="permission_prompt",
-                      message="Claude needs your permission")
+            self.hook(
+                "PreToolUse",
+                tool_name="AskUserQuestion",
+                tool_input={"questions": [{"question": "Which?", "options": [{"label": "A"}]}]},
+            )
+            self.hook(
+                "Notification", notification_type="permission_prompt", message="Claude needs your permission"
+            )
             while read_key() != "\x1b":
                 pass
             self.say("Interrupted")

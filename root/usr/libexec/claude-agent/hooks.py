@@ -102,7 +102,7 @@ def split_tool(name: str) -> tuple[str, str]:
     """Split ``mcp__server__tool`` into (server, tool); built-ins have no server."""
     if not name.startswith("mcp__"):
         return "claude-code", name
-    server, _, tool = name[len("mcp__"):].partition("__")
+    server, _, tool = name[len("mcp__") :].partition("__")
     return server, tool or name
 
 
@@ -140,15 +140,21 @@ def prune(directory: Path, pattern: str, days: float) -> None:
 
 def append(record: dict[str, Any]) -> None:
     directory = audit_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    # 0o700 like the breaker directory below. This one was taking the default,
+    # so the audit log sat in a directory group and other could traverse.
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     line = json.dumps(record, separators=(",", ":"), default=str) + "\n"
     path = directory / f"audit-{record['timestamp'][:10]}.jsonl"
     if not path.exists():
         # Once a day, when the day's file starts, the oldest ones go.
         days = limit("CLAUDE_AGENT_AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
         prune(directory, "audit-*.jsonl", days)
-    # O_APPEND keeps concurrent sessions' lines whole.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
+    # O_APPEND keeps concurrent sessions' lines whole. 0o600, not 0o640: this
+    # file is the record of what the agent was asked to do and what it answered,
+    # which is why `redact()` above exists at all. CodeQL flagged the group bit
+    # (py/overly-permissive-file) and was right -- nothing reads this as a
+    # group, and the directory is owner-only now too.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         os.write(fd, line.encode())
     finally:
@@ -217,8 +223,17 @@ def breaker(event: dict[str, Any]) -> str | None:
 
 # What the supervisor needs from each event; a tool's input only for the tools
 # that open a dialog, whose question is texted to the operator.
-EVENT_FIELDS = ("hook_event_name", "session_id", "transcript_path", "tool_name", "source",
-                "last_assistant_message", "error", "message", "notification_type")
+EVENT_FIELDS = (
+    "hook_event_name",
+    "session_id",
+    "transcript_path",
+    "tool_name",
+    "source",
+    "last_assistant_message",
+    "error",
+    "message",
+    "notification_type",
+)
 DIALOG_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 

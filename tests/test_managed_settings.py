@@ -39,8 +39,15 @@ class CoreFragmentTest(unittest.TestCase):
         self.assertEqual(commands(self.settings, "PermissionRequest")[LIBEXEC + "allow-hook.sh"], "")
 
     def test_the_supervisor_hears_every_turn_event(self) -> None:
-        for event in ("SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "Notification",
-                      "PreToolUse", "PostToolUse"):
+        for event in (
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+            "StopFailure",
+            "Notification",
+            "PreToolUse",
+            "PostToolUse",
+        ):
             self.assertIn(LIBEXEC + "hooks.py event", commands(self.settings, event), event)
 
     def test_core_sets_no_machine_wide_policy(self) -> None:

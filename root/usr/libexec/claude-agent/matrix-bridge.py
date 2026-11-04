@@ -64,7 +64,8 @@ COMMANDS = {
 }
 FREE_TEXT = {"clear", "compact", "goal"}
 HELP = (
-    "Commands by text: /stop [text], " + ", ".join(usage for _, usage in COMMANDS.values())
+    "Commands by text: /stop [text], "
+    + ", ".join(usage for _, usage in COMMANDS.values())
     + ". A text sent while Claude works waits for the turn to end; /stop interrupts it."
     " Other /names run as skills."
 )
@@ -247,8 +248,11 @@ class Bridge:
         while True:
             time.sleep(TYPING_REFRESH_SECONDS)
             now = time.monotonic()
-            if (self.busy_since and now - self.activity < TYPING_IDLE_SECONDS
-                    and now - self.busy_since < TYPING_CAP_SECONDS):
+            if (
+                self.busy_since
+                and now - self.activity < TYPING_IDLE_SECONDS
+                and now - self.busy_since < TYPING_CAP_SECONDS
+            ):
                 self.typing(True)
 
     def tell(self, text: str) -> None:
@@ -303,8 +307,11 @@ class Bridge:
 
     def consider_invite(self, room_id: str, room: dict) -> None:
         for event in room.get("invite_state", {}).get("events", []):
-            if (event.get("type") == "m.room.member" and event.get("state_key") == self.user_id
-                    and event.get("content", {}).get("membership") == "invite"):
+            if (
+                event.get("type") == "m.room.member"
+                and event.get("state_key") == self.user_id
+                and event.get("content", {}).get("membership") == "invite"
+            ):
                 if event.get("sender") not in self.allow:
                     log(f"ignored an invite to {room_id} from {event.get('sender')}")
                     return
@@ -381,7 +388,9 @@ def plaintext_off_host(url: str) -> bool:
     if parsed.scheme != "http":
         return False
     try:
-        resolved = {info[4][0] for info in socket.getaddrinfo(parsed.hostname or "", None)}
+        # sockaddr is typed as a union of the IPv4 and IPv6 tuples, so element
+        # 0 reads as `str | int`; it is the address string in both.
+        resolved = {str(info[4][0]) for info in socket.getaddrinfo(parsed.hostname or "", None)}
     except OSError:
         return True
     return any(ipaddress.ip_address(address.split("%")[0]).is_global for address in resolved)
@@ -396,8 +405,10 @@ def main() -> int:
         log(f"not configured: {exc}")
         return 1
     if plaintext_off_host(homeserver):
-        log("refusing a plain-http homeserver on a public address: the access token would cross the "
-            "network unencrypted. Use https, or a homeserver on a private network.")
+        log(
+            "refusing a plain-http homeserver on a public address: the access token would cross the "
+            "network unencrypted. Use https, or a homeserver on a private network."
+        )
         return 1
     allow = {mxid.strip() for mxid in env.get("CLAUDE_AGENT_MATRIX_ALLOW", "").split(",") if mxid.strip()}
     if not allow:
