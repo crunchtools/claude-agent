@@ -48,13 +48,24 @@ class SupervisorTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
         self.sock = self.dir / "run/control.sock"
-        env = {**os.environ, "CLAUDE_AGENT_CLAUDE": str(FAKE),
-               "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run"),
-               "FAKE_CLAUDE_DIR": str(self.dir), "CLAUDE_AGENT_STARTUP_QUIET": "20",
-               "CLAUDE_AGENT_RESULT_TIMEOUT": "5", "CLAUDECODE": "1", **extra}
+        env = {
+            **os.environ,
+            "CLAUDE_AGENT_CLAUDE": str(FAKE),
+            "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run"),
+            "FAKE_CLAUDE_DIR": str(self.dir),
+            "CLAUDE_AGENT_STARTUP_QUIET": "20",
+            "CLAUDE_AGENT_RESULT_TIMEOUT": "5",
+            "CLAUDECODE": "1",
+            **extra,
+        }
         env.pop("CLAUDE_AGENT_SOCKET", None)
-        self.proc = subprocess.Popen([sys.executable, str(SUPERVISOR), *args], env=env,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        self.proc = subprocess.Popen(
+            [sys.executable, str(SUPERVISOR), *args],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         self.addCleanup(self.stop)
         deadline = time.time() + 10
         while not self.sock.exists() and time.time() < deadline:
@@ -217,12 +228,12 @@ class StartupTest(unittest.TestCase):
         case.request(op="submit", text="hello")
         self.assertEqual(case.events.until("reply")[-1]["text"], "echo: hello")
 
-
     def test_the_bypass_warning_is_left_alone_when_not_asked_for(self) -> None:
         case = self.start(FAKE_CLAUDE_BYPASS_WARNING="1", CLAUDE_AGENT_STARTUP_QUIET="2")
         # The first Enter typed takes the warning's default, "No, exit".
         case.request(op="submit", text="hello")
         self.assertEqual(case.events.until("exited")[-1]["status"], 1)
+
 
 class ResultsTest(unittest.TestCase):
     """Command results read from a transcript, in the orders Claude Code writes them."""
@@ -244,14 +255,24 @@ class ResultsTest(unittest.TestCase):
 
     def compact(self, summary_first: bool) -> list[str]:
         self.results.expect("compact")
-        boundary = {"type": "system", "subtype": "compact_boundary",
-                    "compactMetadata": {"preTokens": 50160, "postTokens": 6588, "durationMs": 13176}}
-        summary = {"type": "user", "isCompactSummary": True,
-                   "message": {"content": "Continued.\n\nSummary:\n1. Intent: " + "x" * 3100}}
-        self.write(*([summary, boundary] if summary_first else [boundary, summary]),
-                   {"type": "user", "message": {"content": "<command-name>/compact</command-name>"}},
-                   {"type": "user", "message": {
-                       "content": "<local-command-stdout>Compacted</local-command-stdout>"}})
+        boundary = {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "compactMetadata": {"preTokens": 50160, "postTokens": 6588, "durationMs": 13176},
+        }
+        summary = {
+            "type": "user",
+            "isCompactSummary": True,
+            "message": {"content": "Continued.\n\nSummary:\n1. Intent: " + "x" * 3100},
+        }
+        self.write(
+            *([summary, boundary] if summary_first else [boundary, summary]),
+            {"type": "user", "message": {"content": "<command-name>/compact</command-name>"}},
+            {
+                "type": "user",
+                "message": {"content": "<local-command-stdout>Compacted</local-command-stdout>"},
+            },
+        )
         self.results.poll()
         return self.emitted[-1]["texts"]
 
@@ -266,8 +287,10 @@ class ResultsTest(unittest.TestCase):
         self.results.timeout = 0
         self.results.expect("fast")
         self.results.poll()
-        self.assertEqual(self.emitted, [{"event": "result", "command": "fast",
-                                         "texts": ["No result from /fast within 1 min."]}])
+        self.assertEqual(
+            self.emitted,
+            [{"event": "result", "command": "fast", "texts": ["No result from /fast within 1 min."]}],
+        )
 
 
 class SendTest(unittest.TestCase):
@@ -308,6 +331,7 @@ class SendTest(unittest.TestCase):
 
     def test_a_full_buffer_drops_it(self) -> None:
         self.check(takes=None, dropped=True)
+
 
 if __name__ == "__main__":
     unittest.main()

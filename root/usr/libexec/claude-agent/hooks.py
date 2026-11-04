@@ -25,6 +25,7 @@ breaker that fails open is not a breaker.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -102,7 +103,7 @@ def split_tool(name: str) -> tuple[str, str]:
     """Split ``mcp__server__tool`` into (server, tool); built-ins have no server."""
     if not name.startswith("mcp__"):
         return "claude-code", name
-    server, _, tool = name[len("mcp__"):].partition("__")
+    server, _, tool = name[len("mcp__") :].partition("__")
     return server, tool or name
 
 
@@ -138,17 +139,54 @@ def prune(directory: Path, pattern: str, days: float) -> None:
             path.unlink(missing_ok=True)
 
 
+def _tighten(path: Path, mode: int) -> None:
+    """Drop permission bits an older install may have left behind.
+
+    Only bits are removed, never added, so a deliberately tighter mode is left
+    alone. A chmod that fails is not worth losing an audit line over -- the
+    record matters more than the mode -- so it is best effort.
+    """
+    try:
+        current = path.stat().st_mode & 0o777
+        if current & ~mode:
+            path.chmod(current & mode)
+    except OSError as exc:
+        # Not swallowed: an audit record is worth more than its mode, so this
+        # does not raise -- but a permission we believe we set and did not is
+        # exactly the thing that must not pass in silence.
+        #
+        # The report is itself suppressed, because print() to a closed stderr
+        # raises BrokenPipeError -- an OSError -- which would escape this
+        # handler and take down the audit write this whole function is
+        # protecting. Reporting is best effort; the record is not.
+        with contextlib.suppress(OSError):
+            print(f"hooks.py audit: could not tighten {path}: {exc!r}", file=sys.stderr)
+
+
 def append(record: dict[str, Any]) -> None:
     directory = audit_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    # 0o700 like the breaker directory below. This one was taking the default,
+    # so the audit log sat in a directory group and other could traverse.
+    #
+    # `mode=` only applies when mkdir CREATES the directory, and the `0o600` on
+    # the open() below only applies when it creates the file -- so on an upgrade
+    # an existing audit directory would keep 0o755 and existing logs 0o640, and
+    # the tightening would silently apply to new installs only. chmod both.
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _tighten(directory, 0o700)
     line = json.dumps(record, separators=(",", ":"), default=str) + "\n"
     path = directory / f"audit-{record['timestamp'][:10]}.jsonl"
     if not path.exists():
         # Once a day, when the day's file starts, the oldest ones go.
         days = limit("CLAUDE_AGENT_AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
         prune(directory, "audit-*.jsonl", days)
-    # O_APPEND keeps concurrent sessions' lines whole.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
+    # O_APPEND keeps concurrent sessions' lines whole. 0o600, not 0o640: this
+    # file is the record of what the agent was asked to do and what it answered,
+    # which is why `redact()` above exists at all. CodeQL flagged the group bit
+    # (py/overly-permissive-file) and was right -- nothing reads this as a
+    # group, and the directory is owner-only now too.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    _tighten(path, 0o600)
     try:
         os.write(fd, line.encode())
     finally:
@@ -217,8 +255,17 @@ def breaker(event: dict[str, Any]) -> str | None:
 
 # What the supervisor needs from each event; a tool's input only for the tools
 # that open a dialog, whose question is texted to the operator.
-EVENT_FIELDS = ("hook_event_name", "session_id", "transcript_path", "tool_name", "source",
-                "last_assistant_message", "error", "message", "notification_type")
+EVENT_FIELDS = (
+    "hook_event_name",
+    "session_id",
+    "transcript_path",
+    "tool_name",
+    "source",
+    "last_assistant_message",
+    "error",
+    "message",
+    "notification_type",
+)
 DIALOG_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 

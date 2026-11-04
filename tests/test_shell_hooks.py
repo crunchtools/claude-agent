@@ -70,9 +70,7 @@ class AllowHookTest(unittest.TestCase):
                         "permission_mode": "plan",
                         "session_id": "s1",
                     }
-                    self.assertIsNone(
-                        run("allow-hook.sh", event, **ON, CLAUDE_AGENT_AUDIT_DIR=audit)
-                    )
+                    self.assertIsNone(run("allow-hook.sh", event, **ON, CLAUDE_AGENT_AUDIT_DIR=audit))
             lines = (Path(audit) / "allow-hook.jsonl").read_text().splitlines()
             self.assertEqual(
                 [(json.loads(line)["event"], json.loads(line)["left_to_person"]) for line in lines],

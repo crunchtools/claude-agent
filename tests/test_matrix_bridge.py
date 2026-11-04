@@ -26,15 +26,44 @@ GROUP = "!group:example.org"
 
 
 def message(sender: str, body: str, room: str = ROOM, msgtype: str = "m.text") -> dict:
-    return {"rooms": {"join": {room: {"timeline": {"events": [
-        {"type": "m.room.message", "sender": sender, "content": {"msgtype": msgtype, "body": body}},
-    ]}}}}}
+    return {
+        "rooms": {
+            "join": {
+                room: {
+                    "timeline": {
+                        "events": [
+                            {
+                                "type": "m.room.message",
+                                "sender": sender,
+                                "content": {"msgtype": msgtype, "body": body},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
 
 
 def invite(sender: str, room: str) -> dict:
-    return {"rooms": {"invite": {room: {"invite_state": {"events": [
-        {"type": "m.room.member", "state_key": ME, "sender": sender, "content": {"membership": "invite"}},
-    ]}}}}}
+    return {
+        "rooms": {
+            "invite": {
+                room: {
+                    "invite_state": {
+                        "events": [
+                            {
+                                "type": "m.room.member",
+                                "state_key": ME,
+                                "sender": sender,
+                                "content": {"membership": "invite"},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
 
 
 class FakeHomeserver:
@@ -232,8 +261,10 @@ class MatrixBridgeTest(unittest.TestCase):
     def test_other_slash_texts_run_as_skills_never_as_keys(self) -> None:
         self.text("/cc wrap up")
         self.text("/exit")
-        self.assertEqual(self.requested(2), [{"op": "submit", "text": "Run /cc wrap up"},
-                                             {"op": "submit", "text": "Run /exit"}])
+        self.assertEqual(
+            self.requested(2),
+            [{"op": "submit", "text": "Run /cc wrap up"}, {"op": "submit", "text": "Run /exit"}],
+        )
 
     def test_stop_carries_its_text(self) -> None:
         self.text("/stop do this instead")
@@ -264,8 +295,13 @@ class MatrixBridgeTest(unittest.TestCase):
         self.text("go")
         self.requested()
         self.sup.push({"event": "result", "command": "fast", "texts": ["/fast: Fast mode ON"]})
-        self.sup.push({"event": "question", "tool": "AskUserQuestion",
-                       "input": {"questions": [{"question": "Which env?", "options": [{"label": "dev"}]}]}})
+        self.sup.push(
+            {
+                "event": "question",
+                "tool": "AskUserQuestion",
+                "input": {"questions": [{"question": "Which env?", "options": [{"label": "dev"}]}]},
+            }
+        )
         self.sup.push({"event": "stopped"})
         texts = self.texted(3)
         self.assertEqual(texts[0], "/fast: Fast mode ON")
@@ -276,8 +312,9 @@ class MatrixBridgeTest(unittest.TestCase):
         self.text("go")
         self.requested()
         self.sup.push({"event": "notice", "text": "Claude is waiting for your input", "type": "idle_prompt"})
-        self.sup.push({"event": "notice", "text": "Claude needs your permission",
-                       "type": "permission_prompt"})
+        self.sup.push(
+            {"event": "notice", "text": "Claude needs your permission", "type": "permission_prompt"}
+        )
         self.assertEqual(self.texted(), ["Claude needs your permission"])
 
     def test_texts_in_a_room_others_read_are_ignored(self) -> None:
@@ -321,8 +358,10 @@ class MatrixBridgeTest(unittest.TestCase):
         self.hs.batches.put(invite(OWNER, "!new:example.org"))
         self.assertTrue(self.wait_for(lambda: self.hs.requests))
         time.sleep(0.5)
-        self.assertEqual([(m, p) for m, p, _ in self.hs.requests],
-                         [("POST", "/_matrix/client/v3/join/%21new%3Aexample.org")])
+        self.assertEqual(
+            [(m, p) for m, p, _ in self.hs.requests],
+            [("POST", "/_matrix/client/v3/join/%21new%3Aexample.org")],
+        )
 
 
 class AllowlistTest(unittest.TestCase):
@@ -330,6 +369,7 @@ class AllowlistTest(unittest.TestCase):
         bridge = runpy.run_path(str(BRIDGE))["COMMANDS"]
         supervisor = runpy.run_path(str(BRIDGE.parent / "supervisor.py"))["COMMANDS"]
         self.assertEqual({name: pattern for name, (pattern, _) in bridge.items()}, supervisor)
+
 
 class PlaintextTest(unittest.TestCase):
     """When the access token would cross a network unencrypted."""
@@ -353,16 +393,25 @@ class PlaintextTest(unittest.TestCase):
         for url, warned in cases.items():
             self.assertEqual(plaintext_off_host(url), warned, url)
 
-
     def test_a_public_plaintext_homeserver_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "token").write_text("tok")
-            env = {**os.environ, "CLAUDE_AGENT_MATRIX_HOMESERVER": "http://8.8.8.8",
-                   "CLAUDE_AGENT_MATRIX_TOKEN_FILE": str(Path(tmp) / "token")}
-            result = subprocess.run([sys.executable, str(BRIDGE)], env=env, capture_output=True,
-                                    text=True, timeout=10, check=False)
+            env = {
+                **os.environ,
+                "CLAUDE_AGENT_MATRIX_HOMESERVER": "http://8.8.8.8",
+                "CLAUDE_AGENT_MATRIX_TOKEN_FILE": str(Path(tmp) / "token"),
+            }
+            result = subprocess.run(
+                [sys.executable, str(BRIDGE)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
         self.assertEqual(result.returncode, 1)
         self.assertIn("refusing a plain-http homeserver", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

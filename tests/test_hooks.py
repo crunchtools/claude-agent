@@ -48,6 +48,34 @@ class AuditTest(unittest.TestCase):
         self.dir = Path(tmp.name)
         self.env = {"CLAUDE_AGENT_AUDIT_DIR": tmp.name}
 
+    def test_audit_log_and_directory_are_owner_only(self) -> None:
+        """The record of what the agent did is not group or world readable."""
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
+                 "tool_response": {}}
+        self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
+        (log,) = sorted(self.dir.glob("audit-*.jsonl"))
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.dir.stat().st_mode & 0o777, 0o700)
+
+    def test_permissions_are_tightened_on_an_existing_directory(self) -> None:
+        """An upgrade has to fix what an older install left behind.
+
+        `mkdir(mode=...)` and `os.open(..., mode)` only apply on creation, so
+        without the chmod this passes on a fresh install and does nothing for
+        anyone who already had an audit log.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.dir.chmod(0o755)
+        stale = self.dir / "audit-2020-01-01.jsonl"
+        stale.write_text("{}\n")
+        stale.chmod(0o644)
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
+                 "tool_response": {}}
+        self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
+        self.assertEqual(self.dir.stat().st_mode & 0o777, 0o700)
+        (fresh,) = [p for p in self.dir.glob("audit-*.jsonl") if p != stale]
+        self.assertEqual(fresh.stat().st_mode & 0o777, 0o600)
+
     def test_record_has_the_profile_fields(self) -> None:
         event = {
             "session_id": "abc",
@@ -232,20 +260,36 @@ class EventTest(unittest.TestCase):
             return json.loads(conn.makefile().readline())
 
     def test_stop_carries_the_final_answer_and_nothing_else(self) -> None:
-        message = self.received({
-            "hook_event_name": "Stop", "session_id": "s", "last_assistant_message": "Done.",
-            "transcript_path": "/t.jsonl", "cwd": "/home/a", "permission_mode": "default",
-        })
-        self.assertEqual(message, {"op": "event", "hook_event_name": "Stop", "session_id": "s",
-                                   "transcript_path": "/t.jsonl", "last_assistant_message": "Done."})
+        message = self.received(
+            {
+                "hook_event_name": "Stop",
+                "session_id": "s",
+                "last_assistant_message": "Done.",
+                "transcript_path": "/t.jsonl",
+                "cwd": "/home/a",
+                "permission_mode": "default",
+            }
+        )
+        self.assertEqual(
+            message,
+            {
+                "op": "event",
+                "hook_event_name": "Stop",
+                "session_id": "s",
+                "transcript_path": "/t.jsonl",
+                "last_assistant_message": "Done.",
+            },
+        )
 
     def test_only_a_dialog_tool_sends_its_input(self) -> None:
         question = {"questions": [{"question": "Which?"}]}
-        asked = self.received({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
-                               "tool_input": question})
+        asked = self.received(
+            {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": question}
+        )
         self.assertEqual(asked["tool_input"], question)
-        bash = self.received({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                              "tool_input": {"command": "cat secrets"}})
+        bash = self.received(
+            {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "cat secrets"}}
+        )
         self.assertNotIn("tool_input", bash)
 
     def test_no_socket_no_supervisor_nothing_sent(self) -> None:
@@ -269,8 +313,14 @@ class GateTest(unittest.TestCase):
             env.update(CLAUDE_AGENT_AUDIT_DIR=tmp, CLAUDE_AGENT_BREAKER_DIR=tmp, CLAUDE_AGENT_MAX_REPEAT="1")
             event = json.dumps({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}})
             for mode in ("breaker", "breaker", "audit"):
-                result = subprocess.run([sys.executable, str(HOOKS), mode], input=event,
-                                        capture_output=True, text=True, env=env, check=False)
+                result = subprocess.run(
+                    [sys.executable, str(HOOKS), mode],
+                    input=event,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
                 self.assertEqual((result.returncode, result.stdout), (0, ""))
             self.assertEqual(list(Path(tmp).iterdir()), [])
 

@@ -43,8 +43,12 @@ class CliTest(unittest.TestCase):
     def test_run_holds_a_session_that_send_reaches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {"CLAUDE_AGENT_RUNTIME_DIR": tmp, "CLAUDE_AGENT_CLAUDE": str(FAKE), "FAKE_CLAUDE_DIR": tmp}
-            agent = subprocess.Popen([sys.executable, str(CLI), "run"], env={**os.environ, **env},
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            agent = subprocess.Popen(
+                [sys.executable, str(CLI), "run"],
+                env={**os.environ, **env},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             try:
                 deadline = time.time() + 10
                 while time.time() < deadline and "idle" not in run("status", env=env).stdout:
@@ -58,10 +62,19 @@ class CliTest(unittest.TestCase):
                     agent.kill()
 
     def start(self, tmp: str, **extra: str) -> subprocess.Popen:
-        env = {"CLAUDE_AGENT_RUNTIME_DIR": tmp, "CLAUDE_AGENT_CLAUDE": str(FAKE), "FAKE_CLAUDE_DIR": tmp,
-               **extra}
-        agent = subprocess.Popen([sys.executable, str(CLI), "run"], env={**os.environ, **env},
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        env = {
+            "CLAUDE_AGENT_RUNTIME_DIR": tmp,
+            "CLAUDE_AGENT_CLAUDE": str(FAKE),
+            "FAKE_CLAUDE_DIR": tmp,
+            **extra,
+        }
+        agent = subprocess.Popen(
+            [sys.executable, str(CLI), "run"],
+            env={**os.environ, **env},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         self.addCleanup(lambda: agent.poll() is None and agent.kill())
         deadline = time.time() + 10
         while time.time() < deadline and "idle" not in run("status", env=env).stdout:
@@ -83,8 +96,11 @@ class CliTest(unittest.TestCase):
     def test_run_restarts_a_bridge_that_dies_and_stops_it_at_the_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             # No token file: the bridge exits at once, every time.
-            agent = self.start(tmp, CLAUDE_AGENT_MATRIX_HOMESERVER="http://127.0.0.1:9",
-                               CLAUDE_AGENT_MATRIX_TOKEN_FILE=str(Path(tmp) / "missing"))
+            agent = self.start(
+                tmp,
+                CLAUDE_AGENT_MATRIX_HOMESERVER="http://127.0.0.1:9",
+                CLAUDE_AGENT_MATRIX_TOKEN_FILE=str(Path(tmp) / "missing"),
+            )
             time.sleep(6.5)
             run("send", "exit", env={"CLAUDE_AGENT_RUNTIME_DIR": tmp})
             self.assertEqual(agent.wait(10), 3)
