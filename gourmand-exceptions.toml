@@ -94,3 +94,17 @@ path = "root/usr/libexec/claude-agent/hooks.py"
 pattern = "could not tighten"
 justification = "Reporting and continuing is the correct behaviour on the audit write path: raising would lose an audit record over a permission bit, and swallowing would hide a security property we failed to set. The handler prints to stderr, which is how this module already reports the breaker and event failures below it."
 classification = "by_design"
+
+# EV009 says `exc` is never used in the handler body. It is used, on the very
+# next line: `print(f"hooks.py audit: could not tighten {path}: {exc!r}", ...)`.
+# The check does not look inside the nested `with contextlib.suppress(OSError):`
+# that the use sits in, and that nesting is not decoration -- without it a
+# BrokenPipeError from print() escapes the handler and takes down the audit
+# write. Removing the `with` to satisfy the check would reintroduce the bug
+# Gatehouse found on this pull request.
+[[exceptions]]
+check = "EV009-discarded_errors"
+path = "root/usr/libexec/claude-agent/hooks.py"
+pattern = "could not tighten"
+justification = "The caught exception IS used, in the f-string one line below, inside a `with contextlib.suppress(OSError)` block that the check does not descend into. The suppression is required: print() to a closed stderr raises BrokenPipeError, an OSError, which would otherwise escape this handler and break the audit write."
+classification = "gourmand_bug"
