@@ -25,6 +25,7 @@ breaker that fails open is not a breaker.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -153,7 +154,13 @@ def _tighten(path: Path, mode: int) -> None:
         # Not swallowed: an audit record is worth more than its mode, so this
         # does not raise -- but a permission we believe we set and did not is
         # exactly the thing that must not pass in silence.
-        print(f"hooks.py audit: could not tighten {path}: {exc!r}", file=sys.stderr)
+        #
+        # The report is itself suppressed, because print() to a closed stderr
+        # raises BrokenPipeError -- an OSError -- which would escape this
+        # handler and take down the audit write this whole function is
+        # protecting. Reporting is best effort; the record is not.
+        with contextlib.suppress(OSError):
+            print(f"hooks.py audit: could not tighten {path}: {exc!r}", file=sys.stderr)
 
 
 def append(record: dict[str, Any]) -> None:

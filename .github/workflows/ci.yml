@@ -24,6 +24,11 @@ jobs:
   sdlc:
     name: sdlc ci
     runs-on: ubuntu-latest
+    # The job this replaced carried `timeout-minutes: 10`. Dropping it would let
+    # a hung check -- CodeQL, or a network call inside the image -- hold a
+    # runner until GitHub's six-hour default. 20 is roughly twice the observed
+    # run, which is the headroom a flaky network needs without the six hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
