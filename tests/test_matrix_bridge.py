@@ -115,9 +115,12 @@ class FakeHomeserver:
             do_POST = write
             do_PUT = write
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        # The bridge is killed mid long-poll at the end of each test.
-        self.server.handle_error = lambda *args: None
+        class QuietServer(ThreadingHTTPServer):
+            # The bridge is killed mid long-poll at the end of each test.
+            def handle_error(self, request: object, client_address: object) -> None:
+                pass
+
+        self.server = QuietServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_port}"
 

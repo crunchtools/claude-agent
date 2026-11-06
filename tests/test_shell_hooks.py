@@ -7,12 +7,13 @@ import os
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 
 LIBEXEC = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent"
 
 
-def run(script: str, event: dict[str, object], **env: str) -> dict[str, object] | None:
+def run(script: str, event: Mapping[str, object], **env: str) -> dict[str, object] | None:
     """Run a hook on one event; return its decision, or None if it gave none."""
     result = subprocess.run(
         ["bash", str(LIBEXEC / script)],
@@ -40,7 +41,7 @@ class AllowHookTest(unittest.TestCase):
             for tool in ("Bash", "Write", "mcp__trentina__merge_pull_request"):
                 event = {"tool_name": tool, "permission_mode": mode}
                 decision = run("allow-hook.sh", event, **ON)
-                self.assertIsNotNone(decision, (mode, tool))
+                assert decision is not None, (mode, tool)
                 self.assertEqual(decision["permissionDecision"], "allow")
 
     def test_answers_the_permission_request_in_any_mode(self) -> None:
@@ -48,7 +49,7 @@ class AllowHookTest(unittest.TestCase):
             for tool in ("Bash", "Write", "mcp__trentina__merge_pull_request"):
                 event = {"hook_event_name": "PermissionRequest", "tool_name": tool, "permission_mode": mode}
                 decision = run("allow-hook.sh", event, **ON)
-                self.assertIsNotNone(decision, (mode, tool))
+                assert decision is not None, (mode, tool)
                 self.assertEqual(decision["hookEventName"], "PermissionRequest")
                 self.assertEqual(decision["decision"], {"behavior": "allow"})
 

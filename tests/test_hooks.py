@@ -11,12 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 HOOKS = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent/hooks.py"
 
 # root/ mirrors the install tree; keep the import from writing bytecode into it.
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("agent_hooks", HOOKS)
+assert spec and spec.loader, HOOKS
 hooks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hooks)
 
@@ -33,7 +35,7 @@ def run_hook(mode: str, event: object, env: dict[str, str]) -> subprocess.Comple
     )
 
 
-def read_records(directory: Path) -> list[dict[str, object]]:
+def read_records(directory: Path) -> list[dict[str, Any]]:
     return [
         json.loads(line)
         for path in sorted(directory.glob("audit-*.jsonl"))
@@ -50,8 +52,7 @@ class AuditTest(unittest.TestCase):
 
     def test_audit_log_and_directory_are_owner_only(self) -> None:
         """The record of what the agent did is not group or world readable."""
-        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
-                 "tool_response": {}}
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {}, "tool_response": {}}
         self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
         (log,) = sorted(self.dir.glob("audit-*.jsonl"))
         self.assertEqual(log.stat().st_mode & 0o777, 0o600)
@@ -69,8 +70,7 @@ class AuditTest(unittest.TestCase):
         stale = self.dir / "audit-2020-01-01.jsonl"
         stale.write_text("{}\n")
         stale.chmod(0o644)
-        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {},
-                 "tool_response": {}}
+        event = {"session_id": "perm", "tool_name": "Bash", "tool_input": {}, "tool_response": {}}
         self.assertEqual(run_hook("audit", event, self.env).returncode, 0)
         self.assertEqual(self.dir.stat().st_mode & 0o777, 0o700)
         (fresh,) = [p for p in self.dir.glob("audit-*.jsonl") if p != stale]
@@ -176,15 +176,21 @@ class BreakerTest(unittest.TestCase):
         self.assertEqual(decision["permissionDecision"], "deny")
         return decision["permissionDecisionReason"]
 
+    def denial(self, command: str) -> str:
+        """Run one call that the breaker must deny; return the reason."""
+        reason = self.call(command)
+        assert reason is not None, f"{command!r} was allowed"
+        return reason
+
     def test_different_calls_pass_until_the_total(self) -> None:
         for n in range(6):
             self.assertIsNone(self.call(f"echo {n}"))
-        self.assertIn("more than 6 tool calls", self.call("echo 6"))
+        self.assertIn("more than 6 tool calls", self.denial("echo 6"))
 
     def test_same_call_in_a_row_trips(self) -> None:
         for _ in range(3):
             self.assertIsNone(self.call("ls"))
-        self.assertIn("4 times in a row", self.call("ls"))
+        self.assertIn("4 times in a row", self.denial("ls"))
 
     def test_a_different_call_resets_the_run(self) -> None:
         for command in ("ls", "ls", "ls", "pwd", "ls", "ls"):
@@ -193,7 +199,7 @@ class BreakerTest(unittest.TestCase):
     def test_tripped_stays_tripped_and_is_audited_once(self) -> None:
         for _ in range(4):
             self.call("ls")
-        self.assertIn("4 times in a row", self.call("something else"))
+        self.assertIn("4 times in a row", self.denial("something else"))
         (record,) = read_records(self.audit)
         self.assertTrue(record["result_summary"].startswith("breaker_tripped"))
 
@@ -205,13 +211,13 @@ class BreakerTest(unittest.TestCase):
     def test_unreadable_state_denies(self) -> None:
         self.state.mkdir(parents=True)
         (self.state / "s1.json").write_text("{not json")
-        self.assertIn("breaker state unavailable", self.call("ls"))
+        self.assertIn("breaker state unavailable", self.denial("ls"))
 
     def test_unwritable_state_directory_denies(self) -> None:
         blocker = Path(self.state.parent) / "file"
         blocker.write_text("")
         self.env["CLAUDE_AGENT_BREAKER_DIR"] = str(blocker / "breaker")
-        self.assertIn("breaker state unavailable", self.call("ls"))
+        self.assertIn("breaker state unavailable", self.denial("ls"))
 
     def test_default_state_directory_is_per_user_runtime(self) -> None:
         env = {k: v for k, v in self.env.items() if k != "CLAUDE_AGENT_BREAKER_DIR"}

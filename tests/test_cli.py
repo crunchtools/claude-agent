@@ -61,7 +61,7 @@ class CliTest(unittest.TestCase):
                 if agent.poll() is None:
                     agent.kill()
 
-    def start(self, tmp: str, **extra: str) -> subprocess.Popen:
+    def start(self, tmp: str, **extra: str) -> subprocess.Popen[str]:
         env = {
             "CLAUDE_AGENT_RUNTIME_DIR": tmp,
             "CLAUDE_AGENT_CLAUDE": str(FAKE),
@@ -75,7 +75,12 @@ class CliTest(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
         )
-        self.addCleanup(lambda: agent.poll() is None and agent.kill())
+
+        def reap() -> None:
+            if agent.poll() is None:
+                agent.kill()
+
+        self.addCleanup(reap)
         deadline = time.time() + 10
         while time.time() < deadline and "idle" not in run("status", env=env).stdout:
             time.sleep(0.2)
@@ -91,6 +96,7 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.stdout, "echo: mine\n")
             run("send", "exit", env=env)
             agent.wait(10)
+            assert agent.stderr is not None  # stderr=PIPE
             agent.stderr.close()
 
     def test_run_restarts_a_bridge_that_dies_and_stops_it_at_the_end(self) -> None:
@@ -104,6 +110,7 @@ class CliTest(unittest.TestCase):
             time.sleep(6.5)
             run("send", "exit", env={"CLAUDE_AGENT_RUNTIME_DIR": tmp})
             self.assertEqual(agent.wait(10), 3)
+            assert agent.stderr is not None  # stderr=PIPE
             log = agent.stderr.read()
             agent.stderr.close()
             self.assertGreaterEqual(log.count("the Matrix bridge exited (1), restarting"), 1)

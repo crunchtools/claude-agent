@@ -38,14 +38,9 @@ max-statements = 50
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-# The SHIPPED code, by path -- not a package. tests/ is left out for now: the
-# type checker's first run here found 31 errors, 5 in the code that ships (all
-# fixed in this change) and 26 in the test suite -- real type mismatches, not
-# missing annotations, so they want reading rather than a blanket relaxation.
-# Fixing 26 of them inside a pull request about CI wiring would bury the wiring.
-# This is still strictly more than the nothing that was type-checked before.
+# The shipped code, by path -- not a package -- and its tests.
 [tool.mypy]
-files = ["root/usr/libexec/claude-agent"]
+files = ["root/usr/libexec/claude-agent", "tests"]
 
 # unittest tests; pytest collects and runs them.
 [tool.pytest.ini_options]
