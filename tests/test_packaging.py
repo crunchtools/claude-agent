@@ -14,7 +14,8 @@ SPEC = (TOP / "packaging/claude-agent.spec").read_text()
 
 def manifest() -> list[tuple[str, str, str]]:
     lines = (TOP / "packaging/files.txt").read_text().splitlines()
-    return [tuple(line.split()) for line in lines if line.strip() and not line.startswith("#")]
+    rows = [line.split() for line in lines if line.strip() and not line.startswith("#")]
+    return [(package, mode, path) for package, mode, path in rows]
 
 
 # %files lines that stay in the section; any other % line ends it.
@@ -85,7 +86,9 @@ class PackagingTest(unittest.TestCase):
             self.assertEqual(examples, sorted(p.name for p in (TOP / "examples").iterdir()))
 
     def test_cli_version_has_a_changelog_entry(self) -> None:
-        version = re.search(r'^VERSION = "([^"]+)"', (TOP / "root/usr/bin/claude-agent").read_text(), re.M)[1]
+        match = re.search(r'^VERSION = "([^"]+)"', (TOP / "root/usr/bin/claude-agent").read_text(), re.M)
+        assert match, "no VERSION in the CLI"
+        version = match[1]
         self.assertIn(f"## [{version}]", (TOP / "CHANGELOG.md").read_text())
 
 

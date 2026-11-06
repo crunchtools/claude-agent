@@ -78,6 +78,7 @@ class SupervisorTest(unittest.TestCase):
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(10)
+        assert self.proc.stderr is not None  # stderr=PIPE
         self.proc.stderr.close()
 
     def request(self, **message: object) -> dict:
@@ -255,12 +256,12 @@ class ResultsTest(unittest.TestCase):
 
     def compact(self, summary_first: bool) -> list[str]:
         self.results.expect("compact")
-        boundary = {
+        boundary: dict[str, object] = {
             "type": "system",
             "subtype": "compact_boundary",
             "compactMetadata": {"preTokens": 50160, "postTokens": 6588, "durationMs": 13176},
         }
-        summary = {
+        summary: dict[str, object] = {
             "type": "user",
             "isCompactSummary": True,
             "message": {"content": "Continued.\n\nSummary:\n1. Intent: " + "x" * 3100},
