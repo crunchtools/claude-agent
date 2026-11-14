@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-14
+
+### Fixed
+- The Matrix bridge sends `User-Agent: claude-agent-matrix`. urllib's default,
+  `Python-urllib/3.x`, is a banned signature behind Cloudflare (error 1010), so
+  a homeserver behind it refused every call and the bridge never got past
+  `whoami`.
+
 ## [1.0.0] - 2026-10-21
 
 The stable interface: the `claude-agent` subcommands and their options, the

@@ -72,6 +72,7 @@ class FakeHomeserver:
     def __init__(self) -> None:
         self.batches: queue.Queue[dict] = queue.Queue()
         self.requests: list[tuple[str, str, dict]] = []
+        self.agents: set[str] = set()
         self.count = 0
         self.members = {ROOM: [ME, OWNER], GROUP: [ME, OWNER, STRANGER]}
         fake = self
@@ -89,6 +90,7 @@ class FakeHomeserver:
                 self.wfile.write(data)
 
             def do_GET(self) -> None:
+                fake.agents.add(self.headers.get("User-Agent", ""))
                 if self.path.endswith("/account/whoami"):
                     self.reply({"user_id": ME})
                     return
@@ -107,6 +109,7 @@ class FakeHomeserver:
                 self.reply({"next_batch": f"s{fake.count}", **batch})
 
             def write(self) -> None:
+                fake.agents.add(self.headers.get("User-Agent", ""))
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length) or b"{}")
                 fake.requests.append((self.command, self.path, body))
@@ -237,6 +240,12 @@ class MatrixBridgeTest(unittest.TestCase):
     def test_a_text_becomes_a_prompt(self) -> None:
         self.text("check the deploy")
         self.assertEqual(self.requested(), [{"op": "submit", "text": "check the deploy"}])
+
+    def test_every_call_names_the_bridge(self) -> None:
+        self.text("check the deploy")
+        self.text("/help")
+        self.texted()
+        self.assertEqual(self.hs.agents, {"claude-agent-matrix"})
 
     def test_strangers_are_dropped(self) -> None:
         self.text("hello", sender=STRANGER)
