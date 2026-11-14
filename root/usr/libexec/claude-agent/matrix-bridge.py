@@ -43,6 +43,9 @@ socket_path = runpy.run_path(str(Path(__file__).resolve().parent / "supervisor.p
 SYNC_TIMEOUT_MS = 30000
 REQUEST_TIMEOUT_SECONDS = 30
 RETRY_SECONDS = 5
+# The bridge names itself. urllib's default, Python-urllib/3.x, is a banned
+# signature behind Cloudflare (error 1010), which refuses every call.
+USER_AGENT = "claude-agent-matrix"
 TYPING_TIMEOUT_MS = 30000
 TYPING_REFRESH_SECONDS = 20
 TYPING_IDLE_SECONDS = 180
@@ -89,6 +92,7 @@ class Homeserver:
         payload = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(self.base + path, data=payload, method=method)
         request.add_header("Authorization", f"Bearer {self.token}")
+        request.add_header("User-Agent", USER_AGENT)
         if payload is not None:
             request.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(request, timeout=timeout) as response:
