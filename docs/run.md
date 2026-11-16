@@ -1,7 +1,7 @@
 # Run it unattended
 
-`claude-agent run` holds an interactive Claude Code session in a pty and drives
-it over a local socket (mode 0600, under `$XDG_RUNTIME_DIR/claude-agent`).
+`claude-agent run` holds an interactive Claude Code session in tmux, or in a
+pty where tmux is not installed, and drives it over a local socket (mode 0600, under `$XDG_RUNTIME_DIR/claude-agent`).
 Prompts go in; each turn's final answer comes out. `claude-agent-matrix` puts
 that socket on your phone.
 
@@ -15,6 +15,9 @@ hooks, not the screen.
 
 - Texts sent mid-turn are held and sent as one prompt when the turn ends.
 - `!` and unlisted `/` commands are never typed.
+- In tmux, the session is on its own server (`tmux -L claude-agent`), so
+  `claude-agent attach` sizes it to your terminal and Remote Control and the
+  Matrix bridge carry on while you watch. In a pty it stays 160×50.
 - `/stop [text]` interrupts, then sends `text`.
 - Matrix: only senders in `CLAUDE_AGENT_MATRIX_ALLOW`, only in a one-to-one
   room, checked again before each answer. Plain `http` only to loopback or a private network.
@@ -35,8 +38,8 @@ $ claude-agent run -- --permission-mode acceptEdits &
 $ claude-agent send --wait "Reply with exactly: pong"
 pong
 $ claude-agent status | tail -1
-session:               idle, 0 held, pid 4242
-$ claude-agent attach            # read-only; Ctrl-] detaches
+session:               idle, 0 held, pid 4242, tmux -L claude-agent
+$ claude-agent attach            # read-only; tmux prefix d detaches (Ctrl-] in a pty)
 ```
 
 | Variable | Meaning |
@@ -44,6 +47,9 @@ $ claude-agent attach            # read-only; Ctrl-] detaches
 | `CLAUDE_AGENT_MATRIX_HOMESERVER` | turns the bridge on |
 | `CLAUDE_AGENT_MATRIX_TOKEN_FILE` | the agent user's access token |
 | `CLAUDE_AGENT_MATRIX_ALLOW` | comma-separated senders |
+| `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux installed, is tmux. A tmux that is installed but broken fails the start with exit 1; there is no fallback to the pty |
+| `CLAUDE_AGENT_TMUX_SOCKET`, `CLAUDE_AGENT_TMUX_SESSION` | the tmux server and session; both default `claude-agent` |
+| `CLAUDE_AGENT_RESPAWN` | seconds; start Claude Code again after it exits, keeping the socket |
 
 ## Related
 
