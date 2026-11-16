@@ -77,14 +77,18 @@ class SupervisorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.launch()
 
-    def launch(self, *args: str, cwd: str | None = None, **extra: str) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = Path(tmp.name)
-        self.sock = self.dir / "run/control.sock"
-        (self.dir / "tmux").mkdir()
-        if self.TERMINAL == "tmux":
-            self.addCleanup(tmux, self.dir / "tmux", "kill-server")
+    def launch(self, *args: str, cwd: str | None = None, again: bool = False, **extra: str) -> None:
+        """A supervisor in a directory of its own; again, in the last one's, on its tmux server."""
+        if again:
+            self.sock.unlink(missing_ok=True)
+        else:
+            tmp = tempfile.TemporaryDirectory()
+            self.addCleanup(tmp.cleanup)
+            self.dir = Path(tmp.name)
+            self.sock = self.dir / "run/control.sock"
+            (self.dir / "tmux").mkdir()
+            if self.TERMINAL == "tmux":
+                self.addCleanup(tmux, self.dir / "tmux", "kill-server")
         env = {
             **tmux_env(self.dir / "tmux"),
             "CLAUDE_AGENT_TERMINAL": self.TERMINAL,
@@ -339,6 +343,28 @@ class TmuxSupervisorTest(SupervisorTest):
         self.assertEqual([p.name for p in self.dir.rglob("*1") if p.name in ("C1", "S1")], [])
 
     def test_an_existing_session_is_not_taken_over(self) -> None:
+        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}
+        second = subprocess.run(
+            [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(second.returncode, 1)
+        self.assertIn("already exists", second.stderr)
+
+    def test_a_session_left_by_a_killed_supervisor_is_ended(self) -> None:
+        # SIGKILL, with no systemd to take the tmux server along.
+        self.proc.kill()
+        self.stop()
+        self.assertEqual(self.tmux("has-session", "-t", "=claude-agent:").returncode, 0)
+        self.launch(again=True)
+        self.request(op="submit", text="hello")
+        self.assertEqual(self.events.until("reply")[-1]["text"], "echo: hello")
+        windows = self.tmux("list-windows", "-t", "=claude-agent:", "-F", "#{window_index}")
+        self.assertEqual(len(windows.stdout.split()), 1)
+
+    def test_a_session_with_no_supervisor_named_is_not_taken_over(self) -> None:
+        # Someone else's, or one a 1.1 supervisor left: it may be anything.
+        self.stop()
+        self.tmux("new-session", "-d", "-s", "claude-agent", "sleep 600")
         env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}
         second = subprocess.run(
             [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30

@@ -130,6 +130,9 @@ PARENT_MARKERS = (
 # tmux answers for a pane that is gone with empty fields and status 0, so the
 # id is how to tell.
 PANE_FORMAT = "#{pane_id}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{pane_pid}"
+# The session's supervisor, as identity() gives it: a session whose supervisor
+# is gone was left by one that was killed, and the next may end it.
+OWNER_OPTION = "@claude-agent-supervisor"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
 OUTPUT = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
@@ -179,6 +182,16 @@ def tmux(*args: str) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(argv, env=env, capture_output=True, timeout=TMUX_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(argv, 1, b"", str(exc).encode())
+
+
+def identity(pid: int) -> str:
+    """host:pid:start time, which a pid used again by another process does not match."""
+    try:
+        # The fields after "(comm)", which may hold spaces; starttime is the 22nd.
+        started = Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[19]
+    except (OSError, IndexError):
+        started = ""
+    return f"{socket.gethostname()}:{pid}:{started}"
 
 
 def screen_text(raw: bytes) -> str:
@@ -327,13 +340,25 @@ class Tmux:
         self.next_poll = 0.0
 
     def taken(self) -> str:
-        """Why it cannot start, or nothing."""
-        if tmux("has-session", "-t", f"={self.session}:").returncode == 0:
-            return (
-                f"tmux session {self.session} already exists; "
-                "end it or set CLAUDE_AGENT_TMUX_SESSION to another name"
-            )
-        return ""
+        """Why it cannot start, or nothing.
+
+        A session whose supervisor was killed (tmux daemonizes, so nothing
+        else ends it) is ended here. One with no supervisor named, or one on
+        another host, or one whose supervisor still runs, is left alone.
+        """
+        target = f"={self.session}:"
+        if tmux("has-session", "-t", target).returncode != 0:
+            return ""
+        owner = tmux("show-options", "-v", "-t", target, OWNER_OPTION).stdout.decode().strip()
+        host, _, pid = owner.rpartition(":")[0].partition(":")
+        if host == socket.gethostname() and pid.isdigit() and identity(int(pid)) != owner:
+            log(f"ending tmux session {self.session}, left by supervisor {pid}, which is gone")
+            if tmux("kill-session", "-t", target).returncode == 0:
+                return ""
+        return (
+            f"tmux session {self.session} already exists; "
+            "end it or set CLAUDE_AGENT_TMUX_SESSION to another name"
+        )
 
     def start(self, argv: list[str], env: dict[str, str]) -> bool:
         """Start Claude Code: in its own pane again, else a new window, else a new session.
@@ -359,6 +384,7 @@ class Tmux:
             log(f"could not start claude in tmux: {started.stderr.decode().strip()}")
             return False
         self.pane = pane
+        tmux("set-option", "-t", f"={self.session}:", OWNER_OPTION, identity(os.getpid()))
         return True
 
     def start_command(self, command: list[str]) -> list[str]:

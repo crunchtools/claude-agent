@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   startup screen, where Enter on the bypass warning exits. A stop no longer
   sends Escape to a Claude Code still at its startup screens, and an answer
   whose Claude Code ended waits for the next one (#33).
+- A supervisor that was killed outright (SIGKILL, with no systemd to end the
+  tmux server too) no longer blocks the next one. The session names its
+  supervisor in a tmux option, and `claude-agent run` ends a session whose
+  supervisor is gone. One with no supervisor named, as 1.1.0 left them, is
+  still refused (#32).
 - In tmux, a restart that failed is tried again in the same pane. It used to
   forget the pane, so every later attempt asked for a new session under a name
   that was still taken and failed too, for good (#31).
