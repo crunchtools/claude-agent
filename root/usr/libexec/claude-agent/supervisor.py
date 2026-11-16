@@ -561,7 +561,7 @@ class Supervisor:
         self.respawn = float(respawn) if respawn else None
         self.next_screen_poll = 0.0
         self.status: int | None = None
-        # Which start of Claude Code a startup timer belongs to.
+        # Which Claude Code a timer was set for; it moves on when one ends.
         self.starts = 0
 
     # The session ----------------------------------------------------------
@@ -622,13 +622,15 @@ class Supervisor:
 
             def accept_bypass() -> None:
                 self.write(DOWN)
-                self.later(0.5, lambda: self.write(ENTER))
+                self.later(0.5, self.this_start(lambda: self.write(ENTER)))
 
-            self.later(1.0, accept_bypass)
+            self.later(1.0, self.this_start(accept_bypass))
             log("accepted bypass permissions mode")
 
     def reap(self, status: int) -> None:
         self.alive = False
+        # Whatever was timed for this Claude Code is for nobody now.
+        self.starts += 1
         log(f"claude exited with status {status}")
         self.emit({"event": "exited", "status": status})
         if self.respawn is None or self.stopping:
@@ -654,9 +656,17 @@ class Supervisor:
 
     def startup_timeout(self) -> None:
         quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
+        self.later(quiet, self.this_start(lambda: self.idle() if self.state == "starting" else None))
+
+    def this_start(self, action: Callable[[], None]) -> Callable[[], None]:
+        """action, done only if the Claude Code it was set for still runs.
+
+        reap() and spawn() both move starts on, so a timer outliving its Claude
+        Code -- across a respawn delay, or into the next one's startup -- does
+        nothing.
+        """
         start = self.starts
-        # Not for a Claude Code started since: its own timer judges it.
-        self.later(quiet, lambda: self.idle() if self.state == "starting" and self.starts == start else None)
+        return lambda: action() if self.starts == start else None
 
     # State, from hooks -------------------------------------------------------
 
@@ -678,7 +688,7 @@ class Supervisor:
         self.session = str(event.get("session_id", ""))
         self.results.transcript(str(event.get("transcript_path", "")))
         if self.state == "starting":
-            self.later(SETTLE_SECONDS, self.idle)
+            self.later(SETTLE_SECONDS, self.this_start(self.idle))
 
     def on_turn_end(self, event: dict) -> None:
         self.dialog = None

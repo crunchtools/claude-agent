@@ -14,6 +14,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 TOP = Path(__file__).resolve().parent.parent
@@ -507,17 +508,35 @@ class TerminalTest(unittest.TestCase):
                 kill.assert_not_called()
                 self.assertEqual(calls[-1], ("kill-pane", "-t", "%1"), shown)
 
-    def test_a_startup_timer_judges_only_its_own_start(self) -> None:
-        with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty"}):
-            supervisor = runpy.run_path(str(SUPERVISOR))["Supervisor"](["claude"], Path("/nonexistent"))
-        with mock.patch.object(supervisor, "idle") as idle:
-            supervisor.startup_timeout()
-            supervisor.starts += 1  # Claude Code exited and was started again
+    def supervisor(self, **env: str) -> Any:
+        with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty", **env}):
+            return runpy.run_path(str(SUPERVISOR))["Supervisor"](["claude"], Path("/nonexistent"))
+
+    def test_a_startup_timer_that_outlives_its_claude_does_nothing(self) -> None:
+        # Claude Code exits early in its startup and the respawn delay outlasts
+        # the rest of its timers: they must not call a dead terminal idle, where
+        # a held prompt would be pasted and lost.
+        supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60", CLAUDE_AGENT_STARTUP_QUIET="60")
+        supervisor.alive = True
+        supervisor.startup_timeout()
+        supervisor.on_session_start({})
+        timers = [action for _, action in supervisor.timers]
+        supervisor.held.append("a held text")
+        with mock.patch.object(supervisor, "emit"), mock.patch.object(supervisor, "paste") as paste:
+            supervisor.reap(1)
+            self.assertEqual(supervisor.state, "starting")
+            for action in timers:
+                action()
+        paste.assert_not_called()
+        self.assertEqual((supervisor.state, supervisor.held), ("starting", ["a held text"]))
+
+    def test_a_startup_timer_of_a_running_claude_still_ends_the_wait(self) -> None:
+        supervisor = self.supervisor()
+        supervisor.alive = True
+        supervisor.startup_timeout()
+        with mock.patch.object(supervisor, "emit"):
             supervisor.timers[-1][1]()
-            idle.assert_not_called()
-            supervisor.startup_timeout()
-            supervisor.timers[-1][1]()
-            idle.assert_called_once()
+        self.assertEqual(supervisor.state, "idle")
 
     def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
