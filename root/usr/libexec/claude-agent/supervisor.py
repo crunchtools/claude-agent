@@ -561,10 +561,13 @@ class Supervisor:
         self.respawn = float(respawn) if respawn else None
         self.next_screen_poll = 0.0
         self.status: int | None = None
+        # Which start of Claude Code a startup timer belongs to.
+        self.starts = 0
 
     # The session ----------------------------------------------------------
 
     def spawn(self) -> bool:
+        self.starts += 1
         env = {"CLAUDE_AGENT": "1", "CLAUDE_AGENT_SOCKET": str(self.sock)}
         self.alive = self.term.start(self.argv, env)
         return self.alive
@@ -651,7 +654,9 @@ class Supervisor:
 
     def startup_timeout(self) -> None:
         quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
-        self.later(quiet, lambda: self.idle() if self.state == "starting" else None)
+        start = self.starts
+        # Not for a Claude Code started since: its own timer judges it.
+        self.later(quiet, lambda: self.idle() if self.state == "starting" and self.starts == start else None)
 
     # State, from hooks -------------------------------------------------------
 

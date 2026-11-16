@@ -74,7 +74,7 @@ class SupervisorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.launch()
 
-    def launch(self, *args: str, cwd: Path | None = None, **extra: str) -> None:
+    def launch(self, *args: str, cwd: str | None = None, **extra: str) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
@@ -328,7 +328,7 @@ class TmuxSupervisorTest(SupervisorTest):
         work = self.dir / "d#(touch C1)#{pane_id}"
         work.mkdir()
         name = "c#(touch S1)#{session_id}"
-        self.launch(cwd=work, CLAUDE_AGENT_TMUX_SESSION=name)
+        self.launch(cwd=str(work), CLAUDE_AGENT_TMUX_SESSION=name)
         self.assertEqual(json.loads((self.dir / "env.json").read_text())["cwd"], str(work))
         listed = self.tmux("list-sessions", "-F", "#{session_name}")
         self.assertEqual(listed.stdout.split("\n")[0], name)
@@ -506,6 +506,18 @@ class TerminalTest(unittest.TestCase):
             else:
                 kill.assert_not_called()
                 self.assertEqual(calls[-1], ("kill-pane", "-t", "%1"), shown)
+
+    def test_a_startup_timer_judges_only_its_own_start(self) -> None:
+        with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty"}):
+            supervisor = runpy.run_path(str(SUPERVISOR))["Supervisor"](["claude"], Path("/nonexistent"))
+        with mock.patch.object(supervisor, "idle") as idle:
+            supervisor.startup_timeout()
+            supervisor.starts += 1  # Claude Code exited and was started again
+            supervisor.timers[-1][1]()
+            idle.assert_not_called()
+            supervisor.startup_timeout()
+            supervisor.timers[-1][1]()
+            idle.assert_called_once()
 
     def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
