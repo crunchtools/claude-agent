@@ -414,6 +414,30 @@ class TmuxRespawnTest(RespawnTest):
         windows = self.case.tmux("list-windows", "-t", "=claude-agent:", "-F", "#{window_index}")
         self.assertEqual(len(windows.stdout.split()), 2)
 
+    def test_a_failed_restart_is_tried_again(self) -> None:
+        # tmux on PATH is a stand-in that, once armed, refuses every call up to
+        # and including the first that would start Claude Code.
+        self.case.doCleanups()
+        stub = tempfile.TemporaryDirectory()
+        self.addCleanup(stub.cleanup)
+        down = Path(stub.name) / "down"
+        (Path(stub.name) / "tmux").write_text(
+            "#!/bin/sh\n"
+            f'if [ -e "{down}" ]; then\n'
+            f'  case " $* " in *" respawn-pane "*|*" new-window "*|*" new-session "*) rm -f "{down}";; esac\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {shutil.which("tmux")} "$@"\n'
+        )
+        (Path(stub.name) / "tmux").chmod(0o755)
+        path = f"{stub.name}:{os.environ['PATH']}"
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="0.5", PATH=path)
+        self.case.request(op="submit", text="exit")
+        self.case.events.until("exited")
+        down.touch()
+        self.again()
+        self.assertFalse(down.exists())
+
     def test_sigterm_ends_the_tmux_session(self) -> None:
         self.case.proc.send_signal(signal.SIGTERM)
         self.case.proc.wait(10)

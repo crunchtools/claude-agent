@@ -348,11 +348,13 @@ class Tmux:
         # Chained, so the option is set before tmux can notice an early exit;
         # with no -t it applies to the window just made.
         started = tmux(*start, "remain-on-exit", "on")
-        if start[0] != "respawn-pane":
-            self.pane = started.stdout.decode().strip()
-        if started.returncode != 0 or not self.pane.startswith("%"):
+        pane = self.pane if start[0] == "respawn-pane" else started.stdout.decode().strip()
+        if started.returncode != 0 or not pane.startswith("%"):
+            # The old pane is kept: the next attempt starts in it again, where
+            # a new session would find its name taken.
             log(f"could not start claude in tmux: {started.stderr.decode().strip()}")
             return False
+        self.pane = pane
         return True
 
     def start_command(self, command: list[str]) -> list[str]:

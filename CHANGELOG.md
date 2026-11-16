@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- In tmux, a restart that failed is tried again in the same pane. It used to
+  forget the pane, so every later attempt asked for a new session under a name
+  that was still taken and failed too, for good (#31).
+
 ## [1.1.0] - 2026-11-16
 
 ### Added
