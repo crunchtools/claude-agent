@@ -22,11 +22,15 @@ FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 # The tmux cases need tmux; CI runs them in an image that has it
 # (pyproject.toml, [tool.sdlc.ci]), and everywhere else they are skipped.
 NEEDS_TMUX = unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+# Run from inside tmux, as on a seat, every tmux these tests start would
+# otherwise default to the server holding the person's own session.
+os.environ.pop("TMUX", None)
+os.environ.pop("TMUX_PANE", None)
 
 
 def tmux_env(directory: Path) -> dict[str, str]:
-    """A tmux server of the test's own, never the one a person is attached to."""
-    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    """A tmux server of the test's own, under directory: never a shared one."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     env["TMUX_TMPDIR"] = str(directory)
     return env
 
@@ -216,6 +220,14 @@ class SupervisorTest(unittest.TestCase):
         self.request(op="submit", text=text)
         self.assertEqual(self.events.until("reply")[-1]["text"], f"echo: {text}")
 
+    def test_claude_gets_its_arguments_as_given(self) -> None:
+        # A semicolon ends a tmux command, and a shell would expand $(...).
+        args = ["a b", ";", "x;", "$(touch pwned)", "it's"]
+        self.stop()
+        self.launch(*args)
+        self.assertEqual(json.loads((self.dir / "argv.json").read_text()), args)
+        self.assertFalse((self.dir / "pwned").exists())
+
     def test_held_texts_are_bounded(self) -> None:
         self.request(op="submit", text="slow 5")
         self.events.until("busy")
@@ -285,20 +297,20 @@ class TmuxSupervisorTest(SupervisorTest):
         outer = tempfile.TemporaryDirectory()
         self.addCleanup(outer.cleanup)
         server = ["tmux", "-S", f"{outer.name}/outer"]
-        subprocess.run(
-            [*server, "new-session", "-d", "-s", "outer", "sleep 600"],
-            env=tmux_env(Path(outer.name)),
-            check=True,
-        )
-        self.addCleanup(subprocess.run, [*server, "kill-server"], check=False)
+        env = tmux_env(Path(outer.name))
+        subprocess.run([*server, "new-session", "-d", "-s", "outer", "sleep 600"], env=env, check=True)
+        self.addCleanup(subprocess.run, [*server, "kill-server"], env=env, check=False)
         pane = subprocess.run(
-            [*server, "display-message", "-p", "-t", "outer", "#{pane_id}"], capture_output=True, text=True
+            [*server, "display-message", "-p", "-t", "outer", "#{pane_id}"],
+            env=env,
+            capture_output=True,
+            text=True,
         )
         self.launch(TMUX=f"{outer.name}/outer,1,0", TMUX_PANE=pane.stdout.strip())
         self.request(op="submit", text="exit")
         self.assertEqual(self.proc.wait(10), 3)
         listed = subprocess.run(
-            [*server, "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True
+            [*server, "list-sessions", "-F", "#{session_name}"], env=env, capture_output=True, text=True
         )
         self.assertEqual(listed.stdout.split(), ["outer"])
 
@@ -342,6 +354,12 @@ class RespawnTest(unittest.TestCase):
         self.case.request(op="submit", text="hello again")
         self.assertEqual(self.case.events.until("reply")[-1]["text"], "echo: hello again")
 
+    def test_sigterm_ends_it_for_good(self) -> None:
+        self.case.proc.send_signal(signal.SIGTERM)
+        self.assertEqual(self.case.events.until("exited")[-1]["event"], "exited")
+        self.case.proc.wait(10)
+        self.assertFalse(self.case.sock.exists())
+
     def test_an_exit_starts_it_again(self) -> None:
         self.case.request(op="submit", text="exit")
         self.assertEqual(self.case.events.until("exited")[-1]["status"], 3)
@@ -349,6 +367,8 @@ class RespawnTest(unittest.TestCase):
 
     def test_a_killed_claude_starts_again(self) -> None:
         pid = self.case.request(op="status")["pid"]
+        # 0 or 1 would signal this process group, or init.
+        self.assertGreater(pid, 1)
         os.kill(pid, signal.SIGKILL)
         self.assertEqual(self.case.events.until("exited")[-1]["status"], -signal.SIGKILL)
         self.again()
@@ -363,6 +383,19 @@ class TmuxRespawnTest(RespawnTest):
         # Gone with its pane, it leaves no status to read.
         self.assertEqual(self.case.events.until("exited")[-1]["status"], 1)
         self.again()
+
+    def test_a_killed_pane_beside_another_window_starts_in_a_new_one(self) -> None:
+        self.case.tmux("new-window", "-d", "-t", "=claude-agent:", "sleep 600")
+        self.case.tmux("kill-pane", "-t", "=claude-agent:0")
+        self.case.events.until("exited")
+        self.again()
+        windows = self.case.tmux("list-windows", "-t", "=claude-agent:", "-F", "#{window_index}")
+        self.assertEqual(len(windows.stdout.split()), 2)
+
+    def test_sigterm_ends_the_tmux_session(self) -> None:
+        self.case.proc.send_signal(signal.SIGTERM)
+        self.case.proc.wait(10)
+        self.assertNotEqual(self.case.tmux("has-session", "-t", "=claude-agent:").returncode, 0)
 
 
 class StartupTest(unittest.TestCase):

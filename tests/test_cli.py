@@ -13,11 +13,14 @@ from pathlib import Path
 
 CLI = Path(__file__).resolve().parent.parent / "root/usr/bin/claude-agent"
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
+# Run from inside tmux, as on a seat, every tmux these tests start would
+# otherwise default to the server holding the person's own session.
+os.environ.pop("TMUX", None)
+os.environ.pop("TMUX_PANE", None)
 
 
 def run(*args: str, path: str | None = None, env: dict | None = None) -> subprocess.CompletedProcess[str]:
-    # Never the tmux server a person running the tests is attached to.
-    env = {k: v for k, v in os.environ.items() if k != "TMUX"} | (env or {})
+    env = {**os.environ, **(env or {})}
     env["PATH"] = path if path is not None else os.environ["PATH"]
     return subprocess.run(
         [sys.executable, str(CLI), *args], capture_output=True, text=True, env=env, check=False
@@ -53,7 +56,7 @@ class CliTest(unittest.TestCase):
             }
             agent = subprocess.Popen(
                 [sys.executable, str(CLI), "run"],
-                env={k: v for k, v in os.environ.items() if k != "TMUX"} | env,
+                env={**os.environ, **env},
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -69,7 +72,8 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(agent.wait(10), 3)
             finally:
                 if agent.poll() is None:
-                    agent.kill()
+                    agent.terminate()
+                    agent.wait(10)
                 if shutil.which("tmux"):
                     server = ["tmux", "-L", "claude-agent", "kill-server"]
                     subprocess.run(server, env=env | {"PATH": os.environ["PATH"]}, check=False)
@@ -86,10 +90,13 @@ class CliTest(unittest.TestCase):
         self.assertEqual(run("attach", "--rw", env=env, path=path).stdout, f"{target}\n")
 
     def start(self, tmp: str, **extra: str) -> subprocess.Popen[str]:
+        # TMUX_TMPDIR: a tmux server under tmp, not the shared one in
+        # /tmp/tmux-UID that a real claude-agent on this host uses.
         env = {
             "CLAUDE_AGENT_RUNTIME_DIR": tmp,
             "CLAUDE_AGENT_CLAUDE": str(FAKE),
             "FAKE_CLAUDE_DIR": tmp,
+            "TMUX_TMPDIR": tmp,
             **extra,
         }
         agent = subprocess.Popen(
@@ -101,8 +108,19 @@ class CliTest(unittest.TestCase):
         )
 
         def reap() -> None:
+            # SIGTERM, which the CLI passes on: SIGKILL would leave its
+            # supervisor running with nobody to stop it.
             if agent.poll() is None:
-                agent.kill()
+                agent.terminate()
+                try:
+                    agent.wait(10)
+                except subprocess.TimeoutExpired:
+                    agent.kill()
+            if shutil.which("tmux"):
+                server = ["tmux", "-L", "claude-agent", "kill-server"]
+                subprocess.run(
+                    server, env={**os.environ, "TMUX_TMPDIR": tmp}, capture_output=True, check=False
+                )
 
         self.addCleanup(reap)
         deadline = time.time() + 10

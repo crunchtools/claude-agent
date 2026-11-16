@@ -118,8 +118,10 @@ PARENT_MARKERS = (
     "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_CODE_SESSION_ATTENDED",
 )
-# What a pane reports: dead or not, how it ended, and the pid it runs.
-PANE_FORMAT = "#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{pane_pid}"
+# What a pane reports: itself, dead or not, how it ended, and the pid it runs.
+# tmux answers for a pane that is gone with empty fields and status 0, so the
+# id is how to tell.
+PANE_FORMAT = "#{pane_id}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{pane_pid}"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
 OUTPUT = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
@@ -328,9 +330,12 @@ class Tmux:
         is what starts it, and Claude Code gets the supervisor's environment.
         remain-on-exit keeps a pane that ended long enough to read how it ended.
         """
-        self.ended, self.marked, self.next_poll = None, "", 0.0
+        self.ended, self.marked, self.next_poll, self.pid = None, "", 0.0, 0
         unset = [arg for name in PARENT_MARKERS for arg in ("-u", name)]
-        start = self.start_command(["env", *unset, *(f"{k}={v}" for k, v in env.items()), *argv])
+        command = ["env", *unset, *(f"{k}={v}" for k, v in env.items()), *argv]
+        # tmux runs these as an argv, no shell, but takes an argument that
+        # ends in ";" for its own command separator unless it is escaped.
+        start = self.start_command([arg[:-1] + "\\;" if arg.endswith(";") else arg for arg in command])
         # Chained, so the option is set before tmux can notice an early exit;
         # with no -t it applies to the window just made.
         started = tmux(*start, "remain-on-exit", "on")
@@ -345,7 +350,8 @@ class Tmux:
         """The tmux command that runs command: the old pane, a new window, or a new session."""
         target = f"={self.session}:"
         cwd = os.getcwd()
-        if self.pane and tmux("display-message", "-p", "-t", self.pane, "").returncode == 0:
+        shown = tmux("display-message", "-p", "-t", self.pane, "#{pane_id}") if self.pane else None
+        if shown and shown.stdout.decode().strip() == self.pane:
             start = ["respawn-pane", "-k", "-t", self.pane, "-c", cwd, *command, ";"]
             return start + ["set-option", "-w", "-t", self.pane]
         if self.pane and tmux("has-session", "-t", target).returncode == 0:
@@ -383,27 +389,41 @@ class Tmux:
     def mark(self) -> None:
         self.marked = self.capture()
 
+    def shown(self) -> list[str] | None:
+        """The pane's dead, status, signal and pid fields; None when it is gone."""
+        shown = tmux("display-message", "-p", "-t", self.pane, PANE_FORMAT)
+        fields = shown.stdout.decode().strip().split(":")
+        if shown.returncode != 0 or len(fields) != PANE_FORMAT.count(":") + 1 or fields[0] != self.pane:
+            return None
+        return fields[1:]
+
     def poll(self) -> int | None:
         """Claude Code's exit status once it has ended."""
         now = time.monotonic()
         if self.ended is not None or now < self.next_poll:
             return self.ended
         self.next_poll = now + PANE_POLL_SECONDS
-        shown = tmux("display-message", "-p", "-t", self.pane, PANE_FORMAT)
-        fields = shown.stdout.decode().strip().split(":")
-        if shown.returncode != 0 or len(fields) != PANE_FORMAT.count(":") + 1:
+        fields = self.shown()
+        if not fields:
             # The pane is gone -- killed, or tmux with it -- and took its status.
-            self.ended = 1
+            self.ended, self.pid = 1, 0
             return self.ended
         dead, status, signum, pid = fields
-        self.pid = int(pid) if pid.isdigit() else 0
+        self.pid = int(pid) if pid.isdigit() and dead == "0" else 0
         if dead == "1":
             self.ended = int(status) if status.lstrip("-").isdigit() else -int(signum or 1)
         return self.ended
 
     def kill(self, signum: int) -> None:
-        if self.pid:
-            os.kill(self.pid, signum)
+        """Signal Claude Code, and only while its pane says it still runs that pid.
+
+        A pid read earlier may belong to a pane that has since died, and then to
+        any process at all; so it is asked for again, and a pane that cannot
+        vouch for a live pid is killed through tmux instead.
+        """
+        fields = self.shown() if self.pane else None
+        if fields and fields[0] == "0" and fields[3].isdigit() and int(fields[3]) > 1:
+            os.kill(int(fields[3]), signum)
         elif self.pane:
             tmux("kill-pane", "-t", self.pane)
 
