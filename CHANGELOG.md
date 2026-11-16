@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-16
+
 ### Added
 - The session runs in tmux when tmux is installed, on a tmux server of its
   own (`tmux -L claude-agent`, session `claude-agent`). `claude-agent attach`
