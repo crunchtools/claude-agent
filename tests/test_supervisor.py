@@ -461,6 +461,30 @@ class TerminalTest(unittest.TestCase):
             with mock.patch("subprocess.run", side_effect=error):
                 self.assertEqual(module["tmux"]("has-session").returncode, 1)
 
+    def test_a_signal_reaches_only_a_pid_the_pane_still_runs(self) -> None:
+        term = runpy.run_path(str(SUPERVISOR))["Tmux"]()
+        term.pane = "%1"
+        for shown, signalled in (
+            ("%1:0:::4242", 4242),  # running: its pid gets the signal
+            ("%1:1:3::4242", None),  # dead: the pid may be anyone's now
+            ("%1:0:::1", None),  # init, or worse
+            ("%2:0:::4242", None),  # another pane answered
+            ("", None),  # gone
+        ):
+            calls: list[tuple[str, ...]] = []
+
+            def tmux(*args: str, out: str = shown, calls: list = calls) -> subprocess.CompletedProcess[bytes]:
+                calls.append(args)
+                return subprocess.CompletedProcess(args, 0 if out else 1, out.encode(), b"")
+
+            with mock.patch.dict(term.kill.__globals__, {"tmux": tmux}), mock.patch("os.kill") as kill:
+                term.kill(signal.SIGTERM)
+            if signalled:
+                kill.assert_called_once_with(signalled, signal.SIGTERM)
+            else:
+                kill.assert_not_called()
+                self.assertEqual(calls[-1], ("kill-pane", "-t", "%1"), shown)
+
     def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {

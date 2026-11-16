@@ -421,9 +421,9 @@ class Tmux:
         any process at all; so it is asked for again, and a pane that cannot
         vouch for a live pid is killed through tmux instead.
         """
-        fields = self.shown() if self.pane else None
-        if fields and fields[0] == "0" and fields[3].isdigit() and int(fields[3]) > 1:
-            os.kill(int(fields[3]), signum)
+        dead, _, _, pid = (self.shown() if self.pane else None) or ["1", "", "", ""]
+        if dead == "0" and pid.isdigit() and int(pid) > 1:
+            os.kill(int(pid), signum)
         elif self.pane:
             tmux("kill-pane", "-t", self.pane)
 
