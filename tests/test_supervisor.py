@@ -77,18 +77,19 @@ class SupervisorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.launch()
 
-    def launch(self, *args: str, cwd: str | None = None, again: bool = False, **extra: str) -> None:
-        """A supervisor in a directory of its own; again, in the last one's, on its tmux server."""
-        if again:
-            self.sock.unlink(missing_ok=True)
-        else:
-            tmp = tempfile.TemporaryDirectory()
-            self.addCleanup(tmp.cleanup)
-            self.dir = Path(tmp.name)
-            self.sock = self.dir / "run/control.sock"
-            (self.dir / "tmux").mkdir()
-            if self.TERMINAL == "tmux":
-                self.addCleanup(tmux, self.dir / "tmux", "kill-server")
+    def launch(self, *args: str, cwd: str | None = None, **extra: str) -> None:
+        """A supervisor in a directory of its own, with a tmux server of its own."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.sock = self.dir / "run/control.sock"
+        (self.dir / "tmux").mkdir()
+        if self.TERMINAL == "tmux":
+            self.addCleanup(tmux, self.dir / "tmux", "kill-server")
+        self.relaunch(*args, cwd=cwd, **extra)
+
+    def relaunch(self, *args: str, cwd: str | None = None, **extra: str) -> None:
+        """A supervisor in the last one's directory, on its tmux server."""
         env = {
             **tmux_env(self.dir / "tmux"),
             "CLAUDE_AGENT_TERMINAL": self.TERMINAL,
@@ -355,7 +356,9 @@ class TmuxSupervisorTest(SupervisorTest):
         self.proc.kill()
         self.stop()
         self.assertEqual(self.tmux("has-session", "-t", "=claude-agent:").returncode, 0)
-        self.launch(again=True)
+        # It left its socket too.
+        self.sock.unlink()
+        self.relaunch()
         self.request(op="submit", text="hello")
         self.assertEqual(self.events.until("reply")[-1]["text"], "echo: hello")
         windows = self.tmux("list-windows", "-t", "=claude-agent:", "-F", "#{window_index}")
@@ -371,6 +374,21 @@ class TmuxSupervisorTest(SupervisorTest):
         )
         self.assertEqual(second.returncode, 1)
         self.assertIn("already exists", second.stderr)
+
+    def test_a_tmux_that_stops_answering_does_not_stall_the_socket(self) -> None:
+        server = int(self.tmux("display-message", "-p", "#{pid}").stdout)
+        os.kill(server, signal.SIGSTOP)
+        try:
+            # Across several pane polls, each of which would wait on tmux.
+            for _ in range(4):
+                started = time.monotonic()
+                self.assertEqual(self.request(op="status")["state"], "idle")
+                self.assertLess(time.monotonic() - started, 1.0)
+                time.sleep(0.5)
+        finally:
+            os.kill(server, signal.SIGCONT)
+        self.request(op="submit", text="after")
+        self.assertEqual(self.events.until("reply")[-1]["text"], "echo: after")
 
     def test_exiting_ends_the_tmux_session(self) -> None:
         self.request(op="submit", text="exit")
@@ -536,7 +554,7 @@ class TerminalTest(unittest.TestCase):
                 self.assertEqual(module["tmux"]("has-session").returncode, 1)
 
     def test_a_signal_reaches_only_a_pid_the_pane_still_runs(self) -> None:
-        term = runpy.run_path(str(SUPERVISOR))["Tmux"]()
+        term = runpy.run_path(str(SUPERVISOR))["Tmux"](None)
         term.pane = "%1"
         for shown, signalled in (
             ("%1:0:::4242", 4242),  # running: its pid gets the signal
@@ -559,6 +577,38 @@ class TerminalTest(unittest.TestCase):
             else:
                 kill.assert_not_called()
                 self.assertEqual(calls[-1], ("kill-pane", "-t", "%1"), shown)
+
+    def test_a_reply_ends_only_where_tmux_ends_it(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        with (
+            mock.patch("subprocess.Popen", side_effect=OSError("no tmux")),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            control = module["Control"](None, "%1")
+        replies: list[tuple[bool, str]] = []
+        control.waiting = [(0.0, lambda ok, text: replies.append((ok, text)))] * 2
+        for line in (
+            "%begin 1700000000 10 0",  # its own attach
+            "%end 1700000000 10 0",
+            "%session-changed $0 claude-agent",
+            "%begin 1700000000 12 1",
+            "%end 1700000000 99 1",  # on the screen, not tmux's
+            "%end 1700000000 12",
+            "line two",
+            "%end 1700000000 12 1",
+            "%begin 1700000000 13 1",
+            "no such pane",
+            "%error 1700000000 13 1",
+        ):
+            control.on_line(line)
+        self.assertTrue(control.attached)
+        self.assertEqual(
+            replies, [(True, "%end 1700000000 99 1\n%end 1700000000 12\nline two"), (False, "no such pane")]
+        )
+        # An attach that failed: its pane is gone.
+        for line in ("%begin 1700000001 1 0", "can't find pane: %1", "%error 1700000001 1 0"):
+            control.on_line(line)
+        self.assertFalse(control.attached)
 
     def supervisor(self, **env: str) -> Any:
         with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty", **env}):
@@ -606,6 +656,7 @@ class TerminalTest(unittest.TestCase):
                 # The next Claude Code's startup screen is still read.
                 supervisor.alive = True
                 supervisor.term.poll.return_value = None
+                supervisor.term.screen.side_effect = lambda then: then("")
                 supervisor.next_screen_poll = 0.0
                 with mock.patch.object(supervisor, "startup_dialogs") as dialogs:
                     supervisor.watch()
@@ -634,7 +685,9 @@ class TerminalTest(unittest.TestCase):
         self.assertIn("CLAUDE_AGENT_RESPAWN", err.getvalue())
         self.assertEqual(self.supervisor(CLAUDE_AGENT_RESPAWN="7").respawn, 7.0)
 
-    def keys_after(self, act: Callable[[Any], None], ends: bool, state: str = "idle") -> tuple[Any, list[bytes]]:
+    def keys_after(
+        self, act: Callable[[Any], None], ends: bool, state: str = "idle"
+    ) -> tuple[Any, list[bytes]]:
         """The keys typed by act and every timer it set, Claude Code ending (or not) between."""
         supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")
         supervisor.alive, supervisor.state = True, state

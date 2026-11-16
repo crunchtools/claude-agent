@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- In tmux, the supervisor polls the pane, reads the screen and types through
+  one control-mode client (`tmux -C`), read in its own loop, in place of a tmux
+  command run to the end each time. A tmux server that stops answering no
+  longer holds up the control socket, and the hooks with it, for up to 10
+  seconds a poll. Starting Claude Code and signalling it still run a tmux
+  command each (#30).
 - `CLAUDE_AGENT_RESPAWN` has a floor of 2 seconds; a shorter delay is raised
   to it, with a log line (#33).
 
