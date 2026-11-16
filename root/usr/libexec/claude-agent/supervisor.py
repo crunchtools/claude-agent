@@ -504,7 +504,9 @@ class Tmux:
         target = f"={self.session}:"
         if tmux("has-session", "-t", target).returncode != 0:
             return ""
-        owner = tmux("show-options", "-v", "-t", target, OWNER_OPTION).stdout.decode().strip()
+        shown = tmux("show-options", "-v", "-t", target, OWNER_OPTION)
+        # Unset, or unreadable: no supervisor named, so not ours to end.
+        owner = shown.stdout.decode().strip() if shown.returncode == 0 else ""
         host, _, pid = owner.rpartition(":")[0].partition(":")
         if host == socket.gethostname() and pid.isdigit() and identity(int(pid)) != owner:
             log(f"ending tmux session {self.session}, left by supervisor {pid}, which is gone")
