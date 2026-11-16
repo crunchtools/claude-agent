@@ -135,6 +135,9 @@ PANE_FORMAT = "#{pane_id}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#
 OWNER_OPTION = "@claude-agent-supervisor"
 # starttime, the 22nd field of /proc/PID/stat, counted from after "(comm)".
 STAT_STARTTIME = 19
+# The flags of a control-mode reply (%begin TIME NUMBER FLAGS) to a command the
+# client sent; tmux's own, such as the attach the client starts with, has 0.
+FROM_CLIENT = "1"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
 OUTPUT = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
@@ -449,7 +452,7 @@ class Control:
             self.block.append(line)
             return
         text, self.block = "\n".join(self.block), None
-        if not guard.endswith(" 1"):
+        if guard.rpartition(" ")[2] != FROM_CLIENT:
             # The attach-session it was started with, not a command we sent;
             # %error when the pane is gone.
             self.attached = kind == "%end"
