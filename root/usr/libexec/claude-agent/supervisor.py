@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Hold an interactive Claude Code session in a pty and drive it from a socket.
+"""Hold an interactive Claude Code session in a terminal and drive it from a socket.
 
     supervisor.py [claude arguments...]
 
-Claude Code runs in a pseudo-terminal nobody has to watch. Everything else
-talks to this process over a unix socket (CLAUDE_AGENT_SOCKET, under
+With tmux installed, Claude Code runs in tmux session CLAUDE_AGENT_TMUX_SESSION
+(default claude-agent) on a tmux server of its own, socket name
+CLAUDE_AGENT_TMUX_SOCKET (default claude-agent), which a person reaches with
+`claude-agent attach` at their own terminal's size. Without it, Claude Code
+runs in a pseudo-terminal of fixed size that the socket relays.
+CLAUDE_AGENT_TERMINAL=tmux or pty chooses. Everything else talks to this
+process over a unix socket (CLAUDE_AGENT_SOCKET, under
 CLAUDE_AGENT_RUNTIME_DIR), one JSON object per line:
 
     {"op": "event", ...}            a hook event, from hooks.py event
@@ -13,7 +18,7 @@ CLAUDE_AGENT_RUNTIME_DIR), one JSON object per line:
     {"op": "stop", "text": ...}     interrupt; then submit text, if any
     {"op": "status"}                state, held texts, session
     {"op": "subscribe"}             a stream of {"event": ...} lines
-    {"op": "attach", "rw": false}   the raw terminal, both ways if rw
+    {"op": "attach", "rw": false}   the raw terminal, both ways if rw (pty only)
 
 The session's state comes from its hooks, never from the screen: idle after
 SessionStart, Stop or StopFailure, busy from UserPromptSubmit. Texts that
@@ -23,7 +28,9 @@ one into an open dialog would answer it. The screen is read in two places
 only, both narrow: the startup warnings, and the confirmation a built-in
 command may open.
 
-Exits with Claude Code's status.
+Exits with Claude Code's status. With CLAUDE_AGENT_RESPAWN=N it instead starts
+Claude Code again N seconds after it exits, in the same terminal, and keeps
+the socket: the bridge and anyone attached stay where they are.
 """
 
 from __future__ import annotations
@@ -36,8 +43,10 @@ import pty
 import re
 import selectors
 import signal
+import shutil
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import termios
@@ -45,8 +54,19 @@ import time
 from pathlib import Path
 from typing import Callable
 
+# The terminal's size; in tmux, only until a person attaches and tmux sizes it
+# to their terminal.
 ROWS = 50
 COLUMNS = 160
+SESSION = "claude-agent"
+TMUX_SOCKET = "claude-agent"
+# Bytes per send-keys, each one an argument of three bytes: tmux 3.8 refuses a
+# command of about 3 KB ("command too long"), older tmux more.
+KEYS_PER_COMMAND = 512
+TMUX_TIMEOUT_SECONDS = 10
+PANE_POLL_SECONDS = 0.5
+SCREEN_POLL_SECONDS = 0.25
+SCREEN_CHARS = 20000
 READ_CHUNK = 65536
 PASTE_START, PASTE_END = b"\x1b[200~", b"\x1b[201~"
 ENTER, ESCAPE, DOWN = b"\r", b"\x1b", b"\x1b[B"
@@ -98,6 +118,8 @@ PARENT_MARKERS = (
     "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_CODE_SESSION_ATTENDED",
 )
+# What a pane reports: dead or not, how it ended, and the pid it runs.
+PANE_FORMAT = "#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}:#{pane_pid}"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
 OUTPUT = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
@@ -117,6 +139,31 @@ def socket_path() -> Path:
     )
     directory = Path(os.environ.get("CLAUDE_AGENT_RUNTIME_DIR") or default)
     return Path(os.environ.get("CLAUDE_AGENT_SOCKET") or directory / "control.sock")
+
+
+def tmux_session() -> str:
+    """The tmux session Claude Code runs in: CLAUDE_AGENT_TMUX_SESSION, else claude-agent."""
+    return os.environ.get("CLAUDE_AGENT_TMUX_SESSION") or SESSION
+
+
+def tmux_socket() -> str:
+    """The tmux server's socket name: CLAUDE_AGENT_TMUX_SOCKET, else claude-agent."""
+    return os.environ.get("CLAUDE_AGENT_TMUX_SOCKET") or TMUX_SOCKET
+
+
+def tmux(*args: str) -> subprocess.CompletedProcess[bytes]:
+    """One tmux command, never left to hang the loop; a failure is a nonzero status.
+
+    Always the server on our own socket. Without TMUX in its environment, and
+    with -L, no command reaches a tmux server the supervisor itself runs in:
+    there an empty target would be the caller's own pane.
+    """
+    argv = ["tmux", "-L", tmux_socket(), *args]
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+    try:
+        return subprocess.run(argv, env=env, capture_output=True, timeout=TMUX_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(argv, 1, b"", str(exc).encode())
 
 
 def screen_text(raw: bytes) -> str:
@@ -253,6 +300,209 @@ class Results:
             self.emit({"event": "result", "command": item["name"], "texts": texts})
 
 
+class Tmux:
+    """Claude Code in a pane of a tmux server of our own, which people attach to."""
+
+    def __init__(self) -> None:
+        self.session = tmux_session()
+        self.pane = ""
+        self.pid = 0
+        self.ended: int | None = None
+        self.marked = ""
+        self.next_poll = 0.0
+
+    def taken(self) -> str:
+        """Why it cannot start, or nothing."""
+        if tmux("has-session", "-t", f"={self.session}:").returncode == 0:
+            return (
+                f"tmux session {self.session} already exists; "
+                "end it or set CLAUDE_AGENT_TMUX_SESSION to another name"
+            )
+        return ""
+
+    def start(self, argv: list[str], env: dict[str, str]) -> bool:
+        """Start Claude Code: in its own pane again, else a new window, else a new session.
+
+        tmux gives the pane the environment its server started with. The
+        server is ours alone and ends with its last session, so the supervisor
+        is what starts it, and Claude Code gets the supervisor's environment.
+        remain-on-exit keeps a pane that ended long enough to read how it ended.
+        """
+        self.ended, self.marked, self.next_poll = None, "", 0.0
+        unset = [arg for name in PARENT_MARKERS for arg in ("-u", name)]
+        start = self.start_command(["env", *unset, *(f"{k}={v}" for k, v in env.items()), *argv])
+        # Chained, so the option is set before tmux can notice an early exit;
+        # with no -t it applies to the window just made.
+        started = tmux(*start, "remain-on-exit", "on")
+        if start[0] != "respawn-pane":
+            self.pane = started.stdout.decode().strip()
+        if started.returncode != 0 or not self.pane.startswith("%"):
+            log(f"could not start claude in tmux: {started.stderr.decode().strip()}")
+            return False
+        return True
+
+    def start_command(self, command: list[str]) -> list[str]:
+        """The tmux command that runs command: the old pane, a new window, or a new session."""
+        target = f"={self.session}:"
+        cwd = os.getcwd()
+        if self.pane and tmux("display-message", "-p", "-t", self.pane, "").returncode == 0:
+            start = ["respawn-pane", "-k", "-t", self.pane, "-c", cwd, *command, ";"]
+            return start + ["set-option", "-w", "-t", self.pane]
+        if self.pane and tmux("has-session", "-t", target).returncode == 0:
+            start = ["new-window", "-t", target, "-c", cwd, "-P", "-F", "#{pane_id}", *command]
+            return start + [";", "set-option", "-w"]
+        start = ["new-session", "-d", "-s", self.session, "-x", str(COLUMNS), "-y", str(ROWS)]
+        return start + ["-c", cwd, "-P", "-F", "#{pane_id}", *command, ";", "set-option", "-w"]
+
+    def write(self, keys: bytes) -> None:
+        """Bytes into the pane as they are, as a pty write would put them.
+
+        Not paste-buffer: tmux 3.6 and later replace its control characters,
+        a paste's brackets among them, unless given -S, which older tmux lacks.
+        """
+        if not self.pane:
+            return
+        for start in range(0, len(keys), KEYS_PER_COMMAND):
+            chunk = keys[start : start + KEYS_PER_COMMAND]
+            sent = tmux("send-keys", "-t", self.pane, "-H", *(f"{key:02x}" for key in chunk))
+            if sent.returncode != 0:
+                log(f"could not type into tmux: {sent.stderr.decode().strip()}")
+                return
+
+    def capture(self) -> str:
+        if not self.pane:
+            return ""
+        shown = tmux("capture-pane", "-p", "-t", self.pane)
+        return shown.stdout.decode(errors="replace") if shown.returncode == 0 else ""
+
+    def screen(self) -> str:
+        """The lines on screen that were not there at the last mark."""
+        old = set(self.marked.splitlines())
+        return "\n".join(line for line in self.capture().splitlines() if line not in old)
+
+    def mark(self) -> None:
+        self.marked = self.capture()
+
+    def poll(self) -> int | None:
+        """Claude Code's exit status once it has ended."""
+        now = time.monotonic()
+        if self.ended is not None or now < self.next_poll:
+            return self.ended
+        self.next_poll = now + PANE_POLL_SECONDS
+        shown = tmux("display-message", "-p", "-t", self.pane, PANE_FORMAT)
+        fields = shown.stdout.decode().strip().split(":")
+        if shown.returncode != 0 or len(fields) != PANE_FORMAT.count(":") + 1:
+            # The pane is gone -- killed, or tmux with it -- and took its status.
+            self.ended = 1
+            return self.ended
+        dead, status, signum, pid = fields
+        self.pid = int(pid) if pid.isdigit() else 0
+        if dead == "1":
+            self.ended = int(status) if status.lstrip("-").isdigit() else -int(signum or 1)
+        return self.ended
+
+    def kill(self, signum: int) -> None:
+        if self.pid:
+            os.kill(self.pid, signum)
+        elif self.pane:
+            tmux("kill-pane", "-t", self.pane)
+
+    def close(self) -> None:
+        if self.pane:
+            tmux("kill-pane", "-t", self.pane)
+
+    def describe(self) -> dict:
+        return {"terminal": "tmux", "tmux_socket": tmux_socket(), "tmux_session": self.session}
+
+
+class Pty:
+    """Claude Code in a pseudo-terminal of its own, for a host without tmux.
+
+    Its output goes to on_output as it comes, for whoever attached through the
+    socket.
+    """
+
+    def __init__(self, selector: selectors.BaseSelector, on_output: Callable[[bytes], None]) -> None:
+        self.selector = selector
+        self.on_output = on_output
+        self.pid = 0
+        self.master = -1
+        self.raw = b""
+        self.ended: int | None = None
+
+    def taken(self) -> str:
+        return ""
+
+    def start(self, argv: list[str], env: dict[str, str]) -> bool:
+        self.close()
+        self.raw, self.ended = b"", None
+        inherited = {k: v for k, v in os.environ.items() if k not in PARENT_MARKERS}
+        env = {"TERM": "xterm-256color"} | inherited | env
+        self.pid, self.master = pty.fork()
+        if self.pid == 0:
+            os.execvpe(argv[0], argv, env)
+        self.resize(ROWS, COLUMNS)
+        os.set_blocking(self.master, False)
+        self.selector.register(self.master, selectors.EVENT_READ, self.on_readable)
+        return True
+
+    def resize(self, rows: int, columns: int) -> None:
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
+    def redraw(self, later: Callable[[float, Callable[[], None]], None]) -> None:
+        """A resize makes the TUI draw the whole screen, for someone who just attached."""
+        self.resize(ROWS - 1, COLUMNS)
+        later(0.2, lambda: self.resize(ROWS, COLUMNS))
+
+    def write(self, keys: bytes) -> None:
+        if self.ended is None:
+            os.write(self.master, keys)
+
+    def on_readable(self) -> None:
+        try:
+            output = os.read(self.master, READ_CHUNK)
+        except OSError as exc:
+            if exc.errno != errno.EIO:
+                raise
+            output = b""  # EIO: the session closed its terminal
+        if not output:
+            self.selector.unregister(self.master)
+            _, status = os.waitpid(self.pid, 0)
+            self.ended = os.waitstatus_to_exitcode(status)
+            return
+        self.raw = (self.raw + output)[-SCREEN_CHARS:]
+        self.on_output(output)
+
+    def screen(self) -> str:
+        """The output since the last mark, escape sequences taken out."""
+        return ANSI.sub(b" ", self.raw).decode(errors="replace")
+
+    def mark(self) -> None:
+        self.raw = b""
+
+    def poll(self) -> int | None:
+        return self.ended
+
+    def kill(self, signum: int) -> None:
+        if self.pid and self.ended is None:
+            os.kill(self.pid, signum)
+
+    def close(self) -> None:
+        """The terminal of a Claude Code that has ended; a new one gets its own."""
+        if self.master >= 0:
+            os.close(self.master)
+            self.master = -1
+
+    def describe(self) -> dict:
+        return {"terminal": "pty"}
+
+
+def terminal(selector: selectors.BaseSelector, on_output: Callable[[bytes], None]) -> Tmux | Pty:
+    """CLAUDE_AGENT_TERMINAL, else tmux when it is installed, else a pty."""
+    choice = os.environ.get("CLAUDE_AGENT_TERMINAL") or ("tmux" if shutil.which("tmux") else "pty")
+    return Pty(selector, on_output) if choice == "pty" else Tmux()
+
+
 class Supervisor:
     def __init__(self, argv: list[str], sock: Path) -> None:
         self.argv = argv
@@ -266,7 +516,6 @@ class Supervisor:
         self.subscribers: list[socket.socket] = []
         self.attached: dict[socket.socket, bool] = {}
         self.timers: list[tuple[float, Callable[[], None]]] = []
-        self.screen = b""
         self.confirm_until = 0.0
         self.answered: set[str] = set()
         # Startup notices, replayed to each subscriber: one may connect later.
@@ -275,28 +524,23 @@ class Supervisor:
         timeout = float(os.environ.get("CLAUDE_AGENT_RESULT_TIMEOUT", RESULT_TIMEOUT_SECONDS))
         self.results = Results(self.on_result, timeout)
         self.enter_due = 0.0
-        self.pid = 0
-        self.master = -1
+        self.term = terminal(self.selector, self.on_output)
+        self.alive = False
+        self.stopping = False
+        respawn = os.environ.get("CLAUDE_AGENT_RESPAWN", "")
+        self.respawn = float(respawn) if respawn else None
+        self.next_screen_poll = 0.0
         self.status: int | None = None
 
     # The session ----------------------------------------------------------
 
-    def spawn(self) -> None:
-        env = {k: v for k, v in os.environ.items() if k not in PARENT_MARKERS}
-        env.update(CLAUDE_AGENT="1", CLAUDE_AGENT_SOCKET=str(self.sock))
-        env.setdefault("TERM", "xterm-256color")
-        self.pid, self.master = pty.fork()
-        if self.pid == 0:
-            os.execvpe(self.argv[0], self.argv, env)
-        self.resize(ROWS, COLUMNS)
-        os.set_blocking(self.master, False)
-        self.selector.register(self.master, selectors.EVENT_READ, self.on_output)
-
-    def resize(self, rows: int, columns: int) -> None:
-        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+    def spawn(self) -> bool:
+        env = {"CLAUDE_AGENT": "1", "CLAUDE_AGENT_SOCKET": str(self.sock)}
+        self.alive = self.term.start(self.argv, env)
+        return self.alive
 
     def write(self, keys: bytes) -> None:
-        os.write(self.master, keys)
+        self.term.write(keys)
 
     def paste(self, text: str) -> None:
         """One bracketed paste, then Enter: a multi-line text is one prompt."""
@@ -304,21 +548,23 @@ class Supervisor:
         self.enter_due = time.monotonic() + SUBMIT_DELAY_SECONDS
         self.later(SUBMIT_DELAY_SECONDS, lambda: self.write(ENTER))
 
-    def on_output(self) -> None:
-        try:
-            output = os.read(self.master, READ_CHUNK)
-        except OSError as exc:
-            if exc.errno != errno.EIO:
-                raise
-            output = b""  # EIO: the session closed its terminal
-        if not output:
-            self.selector.unregister(self.master)
-            self.reap()
-            return
-        self.screen = (self.screen + output)[-SCREEN_CHARS:]
+    def on_output(self, output: bytes) -> None:
         for client in list(self.attached):
             self.send_raw(client, output)
-        self.read_screen(screen_text(self.screen))
+
+    def watch(self) -> None:
+        """Has Claude Code ended, and is there a screen to read."""
+        if not self.alive:
+            return
+        status = self.term.poll()
+        if status is not None:
+            self.reap(status)
+            return
+        now = time.monotonic()
+        reading = self.state == "starting" or self.confirm_until > now
+        if reading and now >= self.next_screen_poll:
+            self.next_screen_poll = now + SCREEN_POLL_SECONDS
+            self.read_screen(self.term.screen())
 
     def read_screen(self, text: str) -> None:
         if self.state == "starting":
@@ -327,7 +573,6 @@ class Supervisor:
             # A built-in asked to confirm (/effort mid-conversation does). The
             # operator asked for it; its default is yes.
             self.confirm_until = 0.0
-            self.screen = b""
             self.write(ENTER)
             log("confirmed the command's dialog")
 
@@ -341,7 +586,6 @@ class Supervisor:
         if "Bypass" in text and "bypass" not in self.answered and "bypassPermissions" in self.argv:
             # Its default is "No, exit"; the mode was asked for on the command line.
             self.answered.add("bypass")
-            self.screen = b""
 
             def accept_bypass() -> None:
                 self.write(DOWN)
@@ -350,11 +594,34 @@ class Supervisor:
             self.later(1.0, accept_bypass)
             log("accepted bypass permissions mode")
 
-    def reap(self) -> None:
-        _, status = os.waitpid(self.pid, 0)
-        self.status = os.waitstatus_to_exitcode(status)
-        log(f"claude exited with status {self.status}")
-        self.emit({"event": "exited", "status": self.status})
+    def reap(self, status: int) -> None:
+        self.alive = False
+        log(f"claude exited with status {status}")
+        self.emit({"event": "exited", "status": status})
+        if self.respawn is None or self.stopping:
+            self.term.close()
+            self.status = status
+            return
+        # A new Claude Code asks its startup questions again.
+        self.state = "starting"
+        self.dialog = None
+        self.answered.clear()
+        self.notices.clear()
+        log(f"starting claude again in {self.respawn:g}s")
+        self.later(self.respawn, self.restart)
+
+    def restart(self) -> None:
+        if self.stopping:
+            self.status = self.status if self.status is not None else 0
+            return
+        if not self.spawn():
+            self.later(self.respawn or 1.0, self.restart)
+            return
+        self.startup_timeout()
+
+    def startup_timeout(self) -> None:
+        quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
+        self.later(quiet, lambda: self.idle() if self.state == "starting" else None)
 
     # State, from hooks -------------------------------------------------------
 
@@ -440,7 +707,7 @@ class Supervisor:
         name = line[1:].split(" ")[0]
         self.state = "command"
         self.results.expect(name)
-        self.screen = b""
+        self.term.mark()
         self.confirm_until = time.monotonic() + CONFIRM_WINDOW_SECONDS
         self.paste(line)
         log(f"typed /{name}")
@@ -524,7 +791,8 @@ class Supervisor:
             "held": len(self.held),
             "dialog": self.dialog,
             "session": self.session,
-            "pid": self.pid,
+            "pid": self.term.pid,
+            **self.term.describe(),
         }
 
     def subscribe(self, client: socket.socket) -> None:
@@ -533,13 +801,14 @@ class Supervisor:
         for notice in self.notices:
             self.send_line(client, notice)
 
-    def attach(self, client: socket.socket, rw: bool) -> None:
+    def attach(self, client: socket.socket, rw: bool) -> dict | None:
+        if not isinstance(self.term, Pty):
+            return {"ok": False, "error": "the session is in tmux; attach to it with tmux"}
         self.attached[client] = rw
         self.send_line(client, {"ok": True})
-        self.send_raw(client, self.screen)
-        # A resize makes the TUI draw the whole screen for the newcomer.
-        self.resize(ROWS - 1, COLUMNS)
-        self.later(0.2, lambda: self.resize(ROWS, COLUMNS))
+        self.send_raw(client, self.term.raw)
+        self.term.redraw(self.later)
+        return None
 
     # Socket plumbing ----------------------------------------------------------
 
@@ -619,11 +888,18 @@ class Supervisor:
         self.timers.append((time.monotonic() + delay, action))
 
     def run(self) -> int:
+        taken = self.term.taken()
+        if taken:
+            log(taken)
+            return 1
+        # Listening first: Claude Code's first hook connects at once.
         self.listen()
-        self.spawn()
-        log(f"session started; socket {self.sock}")
-        quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
-        self.later(quiet, lambda: self.idle() if self.state == "starting" else None)
+        if not self.spawn():
+            self.sock.unlink(missing_ok=True)
+            return 1
+        where = self.term.describe()
+        log(f"session started in {where.get('tmux_session', 'a pty')}; socket {self.sock}")
+        self.startup_timeout()
         while self.status is None:
             for key, _ in self.selector.select(timeout=0.2):
                 key.data()
@@ -633,6 +909,7 @@ class Supervisor:
             for _, action in due:
                 action()
             self.results.poll()
+            self.watch()
         self.sock.unlink(missing_ok=True)
         return self.status
 
@@ -649,8 +926,8 @@ def main(argv: list[str]) -> int:
     supervisor = Supervisor([claude, *argv[1:]], sock)
 
     def forward(signum: int, _frame: object) -> None:
-        if supervisor.pid:
-            os.kill(supervisor.pid, signum)
+        supervisor.stopping = True
+        supervisor.term.kill(signum)
 
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)

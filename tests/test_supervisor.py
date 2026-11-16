@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -12,10 +14,31 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOP = Path(__file__).resolve().parent.parent
 SUPERVISOR = TOP / "root/usr/libexec/claude-agent/supervisor.py"
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
+# The tmux cases need tmux; CI runs them in an image that has it
+# (pyproject.toml, [tool.sdlc.ci]), and everywhere else they are skipped.
+NEEDS_TMUX = unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+
+
+def tmux_env(directory: Path) -> dict[str, str]:
+    """A tmux server of the test's own, never the one a person is attached to."""
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env["TMUX_TMPDIR"] = str(directory)
+    return env
+
+
+def tmux(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["tmux", "-L", "claude-agent", *args],
+        env=tmux_env(directory),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 class Events:
@@ -40,6 +63,10 @@ class Events:
 
 
 class SupervisorTest(unittest.TestCase):
+    """The session in a pty; TmuxSupervisorTest runs every case again in tmux."""
+
+    TERMINAL = "pty"
+
     def setUp(self) -> None:
         self.launch()
 
@@ -48,8 +75,12 @@ class SupervisorTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
         self.sock = self.dir / "run/control.sock"
+        (self.dir / "tmux").mkdir()
+        if self.TERMINAL == "tmux":
+            self.addCleanup(tmux, self.dir / "tmux", "kill-server")
         env = {
-            **os.environ,
+            **tmux_env(self.dir / "tmux"),
+            "CLAUDE_AGENT_TERMINAL": self.TERMINAL,
             "CLAUDE_AGENT_CLAUDE": str(FAKE),
             "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run"),
             "FAKE_CLAUDE_DIR": str(self.dir),
@@ -163,6 +194,9 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(seen[-1]["text"], "echo: A please")
         self.assertNotIn("notice", [event["event"] for event in seen])
 
+    def tmux(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return tmux(self.dir / "tmux", *args)
+
     def test_attach_sees_the_screen(self) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
             conn.settimeout(10)
@@ -175,6 +209,12 @@ class SupervisorTest(unittest.TestCase):
             conn.sendall(b"exit\r")
             time.sleep(1)
             self.assertIsNone(self.proc.poll())
+
+    def test_a_long_prompt_arrives_whole(self) -> None:
+        # Longer than several send-keys in tmux.
+        text = "".join(chr(ord("a") + n % 26) for n in range(5000))
+        self.request(op="submit", text=text)
+        self.assertEqual(self.events.until("reply")[-1]["text"], f"echo: {text}")
 
     def test_held_texts_are_bounded(self) -> None:
         self.request(op="submit", text="slow 5")
@@ -205,11 +245,133 @@ class SupervisorTest(unittest.TestCase):
         self.assertFalse(self.sock.exists())
 
 
+@NEEDS_TMUX
+class TmuxSupervisorTest(SupervisorTest):
+    """The same cases, with the session in tmux, and what only tmux does."""
+
+    TERMINAL = "tmux"
+
+    def test_attach_sees_the_screen(self) -> None:
+        self.assertIn(
+            "Welcome to Fake Claude", self.tmux("capture-pane", "-p", "-t", "=claude-agent:").stdout
+        )
+        # A client attaching at 90x20 -- a control-mode one, which needs no
+        # terminal -- and the window, with Claude Code in it, follows it rather
+        # than a size fixed at start.
+        client = subprocess.Popen(
+            ["tmux", "-L", "claude-agent", "-C", "attach-session", "-t", "=claude-agent:"],
+            env=tmux_env(self.dir / "tmux"),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            text=True,
+        )
+        self.addCleanup(client.wait, 10)
+        self.addCleanup(client.kill)
+        assert client.stdin is not None  # stdin=PIPE
+        client.stdin.write("refresh-client -C 90x20\n")
+        client.stdin.flush()
+        size, deadline = "", time.time() + 10
+        while size != "90x20" and time.time() < deadline:
+            time.sleep(0.1)
+            shown = self.tmux("display-message", "-p", "-t", "=claude-agent:", "#{pane_width}x#{pane_height}")
+            size = shown.stdout.strip()
+        self.assertEqual(size, "90x20")
+        self.request(op="submit", text="after the resize")
+        self.assertEqual(self.events.until("reply")[-1]["text"], "echo: after the resize")
+
+    def test_the_tmux_it_runs_in_is_left_alone(self) -> None:
+        # A supervisor started from inside a person's tmux, as a seat's agent
+        # might: nothing it does, its exit included, reaches that server.
+        outer = tempfile.TemporaryDirectory()
+        self.addCleanup(outer.cleanup)
+        server = ["tmux", "-S", f"{outer.name}/outer"]
+        subprocess.run(
+            [*server, "new-session", "-d", "-s", "outer", "sleep 600"],
+            env=tmux_env(Path(outer.name)),
+            check=True,
+        )
+        self.addCleanup(subprocess.run, [*server, "kill-server"], check=False)
+        pane = subprocess.run(
+            [*server, "display-message", "-p", "-t", "outer", "#{pane_id}"], capture_output=True, text=True
+        )
+        self.launch(TMUX=f"{outer.name}/outer,1,0", TMUX_PANE=pane.stdout.strip())
+        self.request(op="submit", text="exit")
+        self.assertEqual(self.proc.wait(10), 3)
+        listed = subprocess.run(
+            [*server, "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True
+        )
+        self.assertEqual(listed.stdout.split(), ["outer"])
+
+    def test_an_existing_session_is_not_taken_over(self) -> None:
+        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}
+        second = subprocess.run(
+            [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(second.returncode, 1)
+        self.assertIn("already exists", second.stderr)
+
+    def test_exiting_ends_the_tmux_session(self) -> None:
+        self.request(op="submit", text="exit")
+        self.assertEqual(self.proc.wait(10), 3)
+        self.assertNotEqual(self.tmux("has-session", "-t", "=claude-agent:").returncode, 0)
+
+    def test_status_says_where_to_attach(self) -> None:
+        status = self.request(op="status")
+        self.assertEqual(
+            (status["terminal"], status["tmux_socket"], status["tmux_session"]),
+            ("tmux", "claude-agent", "claude-agent"),
+        )
+        self.assertFalse(self.request(op="attach")["ok"])
+
+
+class RespawnTest(unittest.TestCase):
+    """CLAUDE_AGENT_RESPAWN: Claude Code is started again and the socket stays."""
+
+    CASE = SupervisorTest
+
+    def setUp(self) -> None:
+        self.case = self.CASE("test_exits_with_claudes_status")
+        self.addCleanup(self.case.doCleanups)
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="0.5")
+
+    def again(self) -> None:
+        seen = self.case.events.until("idle")
+        self.assertIsNone(self.case.proc.poll())
+        self.assertNotIn("exited", [event["event"] for event in seen])
+        # The bypass warning is answered again, by the new Claude Code.
+        self.case.request(op="submit", text="hello again")
+        self.assertEqual(self.case.events.until("reply")[-1]["text"], "echo: hello again")
+
+    def test_an_exit_starts_it_again(self) -> None:
+        self.case.request(op="submit", text="exit")
+        self.assertEqual(self.case.events.until("exited")[-1]["status"], 3)
+        self.again()
+
+    def test_a_killed_claude_starts_again(self) -> None:
+        pid = self.case.request(op="status")["pid"]
+        os.kill(pid, signal.SIGKILL)
+        self.assertEqual(self.case.events.until("exited")[-1]["status"], -signal.SIGKILL)
+        self.again()
+
+
+@NEEDS_TMUX
+class TmuxRespawnTest(RespawnTest):
+    CASE = TmuxSupervisorTest
+
+    def test_a_killed_pane_starts_again(self) -> None:
+        self.case.tmux("kill-pane", "-t", "=claude-agent:")
+        # Gone with its pane, it leaves no status to read.
+        self.assertEqual(self.case.events.until("exited")[-1]["status"], 1)
+        self.again()
+
+
 class StartupTest(unittest.TestCase):
     """The two startup screens the supervisor reads."""
 
+    CASE = SupervisorTest
+
     def start(self, *args: str, **extra: str) -> SupervisorTest:
-        case = SupervisorTest("test_exits_with_claudes_status")
+        case = self.CASE("test_exits_with_claudes_status")
         self.addCleanup(case.doCleanups)
         case.launch(*args, **extra)
         return case
@@ -234,6 +396,30 @@ class StartupTest(unittest.TestCase):
         # The first Enter typed takes the warning's default, "No, exit".
         case.request(op="submit", text="hello")
         self.assertEqual(case.events.until("exited")[-1]["status"], 1)
+
+
+@NEEDS_TMUX
+class TmuxStartupTest(StartupTest):
+    CASE = TmuxSupervisorTest
+
+
+class TerminalTest(unittest.TestCase):
+    """tmux when it is installed, a pty when it is not, either when asked for."""
+
+    def choose(self, path: str, asked: str = "") -> str:
+        with mock.patch.dict(os.environ, {"PATH": path, "CLAUDE_AGENT_TERMINAL": asked}):
+            module = runpy.run_path(str(SUPERVISOR))
+            return type(module["terminal"](None, print)).__name__
+
+    def test_no_tmux_is_a_pty(self) -> None:
+        self.assertEqual(self.choose("/nonexistent"), "Pty")
+        self.assertEqual(self.choose("/nonexistent", asked="tmux"), "Tmux")
+
+    @NEEDS_TMUX
+    def test_tmux_installed_is_tmux(self) -> None:
+        path = os.environ["PATH"]
+        self.assertEqual(self.choose(path), "Tmux")
+        self.assertEqual(self.choose(path, asked="pty"), "Pty")
 
 
 class ResultsTest(unittest.TestCase):

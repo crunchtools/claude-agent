@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The session runs in tmux when tmux is installed, on a tmux server of its
+  own (`tmux -L claude-agent`, session `claude-agent`). `claude-agent attach`
+  is a `tmux attach`, so the window takes the size of the terminal attaching
+  and redraws cleanly; `--rw` makes it read-write, prefix d detaches. Remote
+  Control and the Matrix bridge are unchanged: both talk to Claude Code and
+  the control socket, not the terminal. Without tmux it is the pty as before.
+  `CLAUDE_AGENT_TERMINAL`, `CLAUDE_AGENT_TMUX_SOCKET` and
+  `CLAUDE_AGENT_TMUX_SESSION` choose.
+- `CLAUDE_AGENT_RESPAWN=N` starts Claude Code again N seconds after it exits,
+  in the same terminal, instead of exiting; the socket, the bridge and anyone
+  attached stay.
+- `status` (op and command) says which terminal holds the session.
+- The packages recommend tmux. UBI 10 and Hummingbird do not carry it, so
+  their images keep the pty.
+
 ## [1.0.1] - 2026-11-14
 
 ### Fixed

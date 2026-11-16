@@ -3,11 +3,12 @@ Version: @VERSION@-1
 Architecture: all
 Maintainer: crunchtools <scott.mccarty@crunchtools.com>
 Depends: claude-code, python3 (>= 3.9), bash, jq
+Recommends: tmux
 Section: admin
 Priority: optional
 Homepage: https://github.com/crunchtools/claude-agent
 Description: run Claude Code as an unattended agent
- claude-agent run holds an interactive session in a pty and takes prompts
+ claude-agent run holds an interactive session in tmux or a pty and takes prompts
  over a local socket, holding them while a turn runs. It ships the hooks an
  unattended Claude Code session needs:
  circuit breakers that halt a conversation that has run away, an audit

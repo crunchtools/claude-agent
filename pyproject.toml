@@ -50,3 +50,22 @@ testpaths = ["tests"]
 # No in-repo Semgrep rules: the check exits 2 when .semgrep is absent rather
 # than scanning nothing and calling it a pass.
 skip = ["semgrep"]
+
+# The tmux cases of tests/test_supervisor.py and tests/test_cli.py skip in the
+# python-sdlc image, which has no tmux; CI runs them, and the pty cases again,
+# in an image that has it. root/ is mounted because the tests run the source
+# tree's supervisor and CLI.
+[tool.sdlc.ci]
+checks = ["tmux-image", "tmux-tests"]
+
+[tool.sdlc.ci.tmux-image]
+kind = "image-build"
+containerfile = "tests/tmux/Containerfile"
+context = "tests/tmux"
+tag = "localhost/claude-agent-tmux:sdlc"
+
+[tool.sdlc.ci.tmux-tests]
+kind = "pytest-in-image"
+image = "localhost/claude-agent-tmux:sdlc"
+tests = ["tests/test_supervisor.py", "tests/test_cli.py"]
+mounts = ["tests", "root"]

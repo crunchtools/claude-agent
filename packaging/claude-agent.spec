@@ -14,6 +14,8 @@ Requires:       claude-code
 Requires:       (python3 >= 3.9 or python3.12 or python3.11)
 Requires:       bash
 Requires:       jq
+# Without tmux the session runs in a pty; UBI 10 and Hummingbird do not carry it.
+Recommends:     tmux
 
 %global __os_install_post %{nil}
 %global _build_id_links none
@@ -21,7 +23,7 @@ Requires:       jq
 
 %description
 claude-agent turns Claude Code into an agent that runs with nobody at the
-keyboard. `claude-agent run` holds an interactive session in a pty and takes
+keyboard. `claude-agent run` holds an interactive session in tmux (or a pty) and takes
 prompts and allowlisted commands over a local socket, holding them while a
 turn runs. It ships the hooks an unattended session needs: circuit breakers
 that halt a conversation that has run away, an audit record of every tool

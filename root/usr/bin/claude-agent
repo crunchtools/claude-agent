@@ -2,7 +2,8 @@
 """claude-agent: run Claude Code as an unattended agent.
 
     claude-agent run [-- CLAUDE-ARGS...]   hold a session; exits with Claude's status
-    claude-agent attach [--rw]             watch the session live (Ctrl-] detaches)
+    claude-agent attach [--rw]             watch the session live (in tmux, prefix d detaches;
+                                           otherwise Ctrl-] does)
     claude-agent send [--wait] TEXT...     send a prompt; held while a turn runs
     claude-agent stop [TEXT...]            interrupt the turn, then send TEXT
     claude-agent status                    what is installed, and the running session
@@ -101,6 +102,25 @@ def run(args: list[str]) -> int:
 
 
 def attach(rw: bool) -> int:
+    """Attach to the session's terminal, read-only unless rw."""
+    session = request({"op": "status"})
+    if not session.get("ok"):
+        print(f"claude-agent: {session.get('error', 'no session is running')}", file=sys.stderr)
+        return 1
+    if session.get("terminal") != "tmux":
+        return attach_pty(rw)
+    # tmux sizes the window to the terminal attaching; it detaches with prefix d.
+    tmux = shutil.which("tmux") or "tmux"
+    target = f"={session['tmux_session']}:"
+    argv = [tmux, "-L", session["tmux_socket"], "attach-session", "-t", target, *([] if rw else ["-r"])]
+    try:
+        os.execv(tmux, argv)
+    except OSError as exc:
+        print(f"claude-agent: cannot run tmux ({exc})", file=sys.stderr)
+    return 1
+
+
+def attach_pty(rw: bool) -> int:
     try:
         conn = connect()
     except OSError as exc:
@@ -217,7 +237,8 @@ def status() -> int:
     row("CLAUDE_AGENT", "1 (hooks active)" if agent else "unset (hooks inactive in this shell)")
     session = request({"op": "status"})
     if session.get("ok"):
-        row("session", f"{session['state']}, {session['held']} held, pid {session['pid']}")
+        where = f"tmux -L {session['tmux_socket']}" if session.get("terminal") == "tmux" else "pty"
+        row("session", f"{session['state']}, {session['held']} held, pid {session['pid']}, {where}")
     else:
         row("session", "none running")
     return 1 if missing else 0
