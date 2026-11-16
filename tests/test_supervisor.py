@@ -468,6 +468,7 @@ class TerminalTest(unittest.TestCase):
             ("%1:0:::4242", 4242),  # running: its pid gets the signal
             ("%1:1:3::4242", None),  # dead: the pid may be anyone's now
             ("%1:0:::1", None),  # init, or worse
+            ("%1:0:::", None),  # no pid at all
             ("%2:0:::4242", None),  # another pane answered
             ("", None),  # gone
         ):
