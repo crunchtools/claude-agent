@@ -6,7 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `CLAUDE_AGENT_RESPAWN` has a floor of 2 seconds; a shorter delay is raised
+  to it, with a log line (#33).
+
 ### Fixed
+- A paste's Enter, a stop's Escape and a dialog's answer, each timed, reach
+  only the Claude Code they were meant for. In tmux, one that ended in that
+  window was replaced in the same pane, and the key landed on the next one's
+  startup screen, where Enter on the bypass warning exits. A stop no longer
+  sends Escape to a Claude Code still at its startup screens, and an answer
+  whose Claude Code ended waits for the next one (#33).
 - In tmux, a restart that failed is tried again in the same pane. It used to
   forget the pane, so every later attempt asked for a new session under a name
   that was still taken and failed too, for good (#31).

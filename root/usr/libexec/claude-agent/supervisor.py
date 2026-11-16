@@ -74,6 +74,10 @@ SETTLE_SECONDS = 1.0
 SUBMIT_DELAY_SECONDS = 0.3
 CONFIRM_WINDOW_SECONDS = 3.0
 STOP_SETTLE_SECONDS = 1.0
+# The shortest CLAUDE_AGENT_RESPAWN. A key timed for a Claude Code -- a paste's
+# Enter, a stop's Escape, up to about STOP_SETTLE_SECONDS after it was asked
+# for -- must not outlive it into the next, which in tmux has the same pane.
+RESPAWN_FLOOR_SECONDS = 2.0
 RESULT_TIMEOUT_SECONDS = 900
 OUTPUT_CHARS = 1000
 SUMMARY_CHARS = 3000
@@ -561,6 +565,9 @@ class Supervisor:
         self.stopping = False
         respawn = os.environ.get("CLAUDE_AGENT_RESPAWN", "")
         self.respawn = float(respawn) if respawn else None
+        if self.respawn is not None and self.respawn < RESPAWN_FLOOR_SECONDS:
+            log(f"CLAUDE_AGENT_RESPAWN={respawn} is below the floor; waiting {RESPAWN_FLOOR_SECONDS:g}s")
+            self.respawn = RESPAWN_FLOOR_SECONDS
         self.next_screen_poll = 0.0
         self.status: int | None = None
         # Which Claude Code a timer was set for; it moves on when one ends.
@@ -581,7 +588,7 @@ class Supervisor:
         """One bracketed paste, then Enter: a multi-line text is one prompt."""
         self.write(PASTE_START + text.encode() + PASTE_END)
         self.enter_due = time.monotonic() + SUBMIT_DELAY_SECONDS
-        self.later(SUBMIT_DELAY_SECONDS, lambda: self.write(ENTER))
+        self.later(SUBMIT_DELAY_SECONDS, self.this_start(lambda: self.write(ENTER)))
 
     def on_output(self, output: bytes) -> None:
         for client in list(self.attached):
@@ -660,15 +667,24 @@ class Supervisor:
         quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
         self.later(quiet, self.this_start(lambda: self.idle() if self.state == "starting" else None))
 
-    def this_start(self, action: Callable[[], None]) -> Callable[[], None]:
-        """action, done only if the Claude Code it was set for still runs.
+    def this_start(
+        self, action: Callable[[], None], otherwise: Callable[[], None] | None = None
+    ) -> Callable[[], None]:
+        """action, done only if the Claude Code it was set for still runs; else otherwise.
 
         reap() and spawn() both move starts on, so a timer outliving its Claude
         Code -- across a respawn delay, or into the next one's startup -- does
-        nothing.
+        nothing, or only otherwise.
         """
         start = self.starts
-        return lambda: action() if self.starts == start else None
+
+        def fenced() -> None:
+            if self.starts == start:
+                action()
+            elif otherwise:
+                otherwise()
+
+        return fenced
 
     # State, from hooks -------------------------------------------------------
 
@@ -761,7 +777,7 @@ class Supervisor:
         # A built-in fires no hook. The session is free again when its result
         # is in the transcript, or after a wait sized to the command.
         wait = COMPACT_WAIT_SECONDS if name == "compact" else CONFIRM_WINDOW_SECONDS
-        self.later(wait, self.command_done)
+        self.later(wait, self.this_start(self.command_done))
 
     # Requests ---------------------------------------------------------------
 
@@ -780,13 +796,17 @@ class Supervisor:
             # The text answers the open question: close the dialog, send it.
             self.dialog = None
             self.write(ESCAPE)
-            self.later(STOP_SETTLE_SECONDS, lambda: self.paste(text))
+            # Ended meanwhile, it leaves the text for the next Claude Code.
+            self.later(STOP_SETTLE_SECONDS, self.this_start(lambda: self.paste(text), lambda: self.hold(text)))
             return {"ok": True, "answered": True}
         if len(self.held) >= MAX_HELD_TEXTS or sum(map(len, self.held)) + len(text) > MAX_HELD_CHARS:
             return {"ok": False, "error": "too much is already waiting for this turn; /stop or wait"}
+        self.hold(text)
+        return {"ok": True, "held": bool(self.held)}
+
+    def hold(self, text: str) -> None:
         self.held.append(text)
         self.drain()
-        return {"ok": True, "held": bool(self.held)}
 
     def command(self, line: str) -> dict:
         line = " ".join(line.split())
@@ -806,7 +826,9 @@ class Supervisor:
         # A paste whose Enter is still due would take the Escape as an edit
         # and then run anyway; interrupt once it has been submitted.
         wait = max(0.0, self.enter_due - time.monotonic()) + (0.2 if self.enter_due else 0.0)
-        self.later(wait, lambda: self.write(ESCAPE))
+        # Only into the Claude Code that was asked, and once it is past its
+        # startup screens, where Escape would answer one.
+        self.later(wait, self.this_start(lambda: self.write(ESCAPE) if self.state != "starting" else None))
         # Stop does not fire on an interrupt; the session is idle once it settles.
         self.later(wait + STOP_SETTLE_SECONDS, lambda: self.after_stop(text))
         return {"ok": True, "dropped": dropped}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import runpy
@@ -14,7 +16,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest import mock
 
 TOP = Path(__file__).resolve().parent.parent
@@ -366,7 +368,7 @@ class RespawnTest(unittest.TestCase):
     def setUp(self) -> None:
         self.case = self.CASE("test_exits_with_claudes_status")
         self.addCleanup(self.case.doCleanups)
-        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="0.5")
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="2")
 
     def again(self) -> None:
         seen = self.case.events.until("idle")
@@ -431,7 +433,7 @@ class TmuxRespawnTest(RespawnTest):
         )
         (Path(stub.name) / "tmux").chmod(0o755)
         path = f"{stub.name}:{os.environ['PATH']}"
-        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="0.5", PATH=path)
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="2", PATH=path)
         self.case.request(op="submit", text="exit")
         self.case.events.until("exited")
         down.touch()
@@ -596,6 +598,56 @@ class TerminalTest(unittest.TestCase):
                 supervisor.timers.pop(0)[1]()  # ENTER, set before any reap's restart
             keys = [call.args[0] for call in write.call_args_list]
             self.assertEqual(keys, [b"\x1b[B"] if exits else [b"\x1b[B", b"\r"])
+
+    def test_respawn_has_a_floor(self) -> None:
+        # Below it, a key timed for the Claude Code that ended could reach the
+        # next one: respawn-pane reuses the pane.
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="0.5")
+        self.assertEqual(supervisor.respawn, 2.0)
+        self.assertIn("CLAUDE_AGENT_RESPAWN", err.getvalue())
+        self.assertEqual(self.supervisor(CLAUDE_AGENT_RESPAWN="7").respawn, 7.0)
+
+    def keys_after(self, act: Callable[[Any], None], ends: bool, state: str = "idle") -> tuple[Any, list[bytes]]:
+        """The keys typed by act and every timer it set, Claude Code ending (or not) between."""
+        supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")
+        supervisor.alive, supervisor.state = True, state
+        supervisor.term = mock.Mock()
+        with mock.patch.object(supervisor, "emit"):
+            act(supervisor)
+            if ends:
+                supervisor.reap(1)
+            while timers := [t for t in supervisor.timers if t[1] != supervisor.restart]:
+                supervisor.timers = [t for t in supervisor.timers if t not in timers]
+                for _, action in timers:
+                    action()
+        return supervisor, [call.args[0] for call in supervisor.term.write.call_args_list]
+
+    def test_a_pastes_enter_goes_only_to_the_claude_it_was_pasted_into(self) -> None:
+        paste = b"\x1b[200~hello\x1b[201~"
+        for ends, keys in ((False, [paste, b"\r"]), (True, [paste])):
+            _, typed = self.keys_after(lambda s: s.submit("hello"), ends)
+            self.assertEqual(typed, keys, ends)
+
+    def test_a_stops_escape_goes_only_to_a_claude_that_is_running_a_turn(self) -> None:
+        for ends, state, keys in (
+            (False, "busy", [b"\x1b"]),
+            (True, "busy", []),
+            # Escape on a startup screen answers it, or exits.
+            (False, "starting", []),
+        ):
+            _, typed = self.keys_after(lambda s: s.stop(""), ends, state)
+            self.assertEqual(typed, keys, (ends, state))
+
+    def test_an_answer_whose_claude_ended_is_held_for_the_next(self) -> None:
+        def answer(supervisor: Any) -> None:
+            supervisor.dialog = "AskUserQuestion"
+            supervisor.submit("A please")
+
+        supervisor, typed = self.keys_after(answer, True, "busy")
+        self.assertEqual((typed, supervisor.held), ([b"\x1b"], ["A please"]))
+        supervisor, typed = self.keys_after(answer, False, "busy")
+        self.assertEqual((typed[-1], supervisor.held), (b"\r", []))
 
     def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
