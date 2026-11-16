@@ -454,6 +454,29 @@ class TerminalTest(unittest.TestCase):
         self.assertEqual(self.choose(path), "Tmux")
         self.assertEqual(self.choose(path, asked="pty"), "Pty")
 
+    def test_a_tmux_that_fails_to_run_is_a_failed_command(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        hung = subprocess.TimeoutExpired(["tmux"], 10)
+        for error in (FileNotFoundError("tmux"), hung):
+            with mock.patch("subprocess.run", side_effect=error):
+                self.assertEqual(module["tmux"]("has-session").returncode, 1)
+
+    def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                **tmux_env(Path(tmp)),
+                "PATH": "/nonexistent",
+                "CLAUDE_AGENT_TERMINAL": "tmux",
+                "CLAUDE_AGENT_CLAUDE": str(FAKE),
+                "CLAUDE_AGENT_RUNTIME_DIR": f"{tmp}/run",
+            }
+            ended = subprocess.run(
+                [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
+            )
+            self.assertEqual(ended.returncode, 1)
+            self.assertIn("could not start claude in tmux", ended.stderr)
+            self.assertFalse(Path(f"{tmp}/run/control.sock").exists())
+
 
 class ResultsTest(unittest.TestCase):
     """Command results read from a transcript, in the orders Claude Code writes them."""
