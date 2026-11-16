@@ -117,6 +117,10 @@ PARENT_MARKERS = (
     "CLAUDE_CODE_MESSAGING_SOCKET",
     "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_CODE_SESSION_ATTENDED",
+    # And the tmux it runs in: with these, a bare `tmux` in Claude Code's shell
+    # reaches that server -- ours, where kill-server would end Claude Code.
+    "TMUX",
+    "TMUX_PANE",
 )
 # What a pane reports: itself, dead or not, how it ended, and the pid it runs.
 # tmux answers for a pane that is gone with empty fields and status 0, so the
@@ -151,6 +155,11 @@ def tmux_session() -> str:
 def tmux_socket() -> str:
     """The tmux server's socket name: CLAUDE_AGENT_TMUX_SOCKET, else claude-agent."""
     return os.environ.get("CLAUDE_AGENT_TMUX_SOCKET") or TMUX_SOCKET
+
+
+def literal(text: str) -> str:
+    """text as a tmux format that expands to itself: no #(...) runs, no #{...} is read."""
+    return text.replace("#", "##")
 
 
 def tmux(*args: str) -> subprocess.CompletedProcess[bytes]:
@@ -349,7 +358,8 @@ class Tmux:
     def start_command(self, command: list[str]) -> list[str]:
         """The tmux command that runs command: the old pane, a new window, or a new session."""
         target = f"={self.session}:"
-        cwd = os.getcwd()
+        # -c and -s are formats, where #(...) runs a shell.
+        cwd = literal(os.getcwd())
         shown = tmux("display-message", "-p", "-t", self.pane, "#{pane_id}") if self.pane else None
         if shown and shown.stdout.decode().strip() == self.pane:
             start = ["respawn-pane", "-k", "-t", self.pane, "-c", cwd, *command, ";"]
@@ -357,7 +367,7 @@ class Tmux:
         if self.pane and tmux("has-session", "-t", target).returncode == 0:
             start = ["new-window", "-t", target, "-c", cwd, "-P", "-F", "#{pane_id}", *command]
             return start + [";", "set-option", "-w"]
-        start = ["new-session", "-d", "-s", self.session, "-x", str(COLUMNS), "-y", str(ROWS)]
+        start = ["new-session", "-d", "-s", literal(self.session), "-x", str(COLUMNS), "-y", str(ROWS)]
         return start + ["-c", cwd, "-P", "-F", "#{pane_id}", *command, ";", "set-option", "-w"]
 
     def write(self, keys: bytes) -> None:

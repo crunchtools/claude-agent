@@ -13,7 +13,8 @@ prompt is chosen by the prompt's text:
     exit           exits 3
     anything else  replies "echo: <prompt>"
 
-FAKE_CLAUDE_DIR is where its transcripts go, and argv.json, its arguments. FAKE_CLAUDE_UNTRUSTED=1 makes it
+FAKE_CLAUDE_DIR is where its transcripts go, argv.json, its arguments, and
+env.json, its working directory and tmux variables. FAKE_CLAUDE_UNTRUSTED=1 makes it
 stop at the working directory's trust question, and --permission-mode
 bypassPermissions shows the warning whose default is "No, exit".
 """
@@ -110,6 +111,8 @@ class Fake:
     def startup(self) -> bool:
         """The startup screens; False when the session should exit."""
         (DIR / "argv.json").write_text(json.dumps(sys.argv[1:]))
+        seen = {"cwd": os.getcwd(), "TMUX": os.environ.get("TMUX"), "TMUX_PANE": os.environ.get("TMUX_PANE")}
+        (DIR / "env.json").write_text(json.dumps(seen))
         if os.environ.get("FAKE_CLAUDE_UNTRUSTED"):
             self.say("Do you trust the files in this folder?  1. No, exit  2. Yes, proceed")
             while True:

@@ -74,7 +74,7 @@ class SupervisorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.launch()
 
-    def launch(self, *args: str, **extra: str) -> None:
+    def launch(self, *args: str, cwd: Path | None = None, **extra: str) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
@@ -97,6 +97,7 @@ class SupervisorTest(unittest.TestCase):
         self.proc = subprocess.Popen(
             [sys.executable, str(SUPERVISOR), *args],
             env=env,
+            cwd=cwd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
@@ -228,6 +229,13 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(json.loads((self.dir / "argv.json").read_text()), args)
         self.assertFalse((self.dir / "pwned").exists())
 
+    def test_claude_gets_no_tmux_to_reach(self) -> None:
+        # The tmux the supervisor runs in, or the one it runs Claude Code in.
+        self.stop()
+        self.launch(TMUX="/tmp/elsewhere,1,0", TMUX_PANE="%9")
+        seen = json.loads((self.dir / "env.json").read_text())
+        self.assertEqual((seen["TMUX"], seen["TMUX_PANE"]), (None, None))
+
     def test_held_texts_are_bounded(self) -> None:
         self.request(op="submit", text="slow 5")
         self.events.until("busy")
@@ -313,6 +321,19 @@ class TmuxSupervisorTest(SupervisorTest):
             [*server, "list-sessions", "-F", "#{session_name}"], env=env, capture_output=True, text=True
         )
         self.assertEqual(listed.stdout.split(), ["outer"])
+
+    def test_a_session_name_and_directory_are_taken_literally(self) -> None:
+        # Both are tmux formats, where #(...) runs a shell and #{...} expands.
+        self.stop()
+        work = self.dir / "d#(touch C1)#{pane_id}"
+        work.mkdir()
+        name = "c#(touch S1)#{session_id}"
+        self.launch(cwd=work, CLAUDE_AGENT_TMUX_SESSION=name)
+        self.assertEqual(json.loads((self.dir / "env.json").read_text())["cwd"], str(work))
+        listed = self.tmux("list-sessions", "-F", "#{session_name}")
+        self.assertEqual(listed.stdout.split("\n")[0], name)
+        self.assertEqual(self.request(op="status")["tmux_session"], name)
+        self.assertEqual([p.name for p in self.dir.rglob("*1") if p.name in ("C1", "S1")], [])
 
     def test_an_existing_session_is_not_taken_over(self) -> None:
         env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}

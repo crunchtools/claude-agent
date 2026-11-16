@@ -47,7 +47,7 @@ $ claude-agent attach            # read-only; tmux prefix d detaches (Ctrl-] in 
 | `CLAUDE_AGENT_MATRIX_HOMESERVER` | turns the bridge on |
 | `CLAUDE_AGENT_MATRIX_TOKEN_FILE` | the agent user's access token |
 | `CLAUDE_AGENT_MATRIX_ALLOW` | comma-separated senders |
-| `CLAUDE_AGENT_TERMINAL` | `tmux` or `pty`; default tmux when installed |
+| `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux installed, is tmux. A tmux that is installed but broken fails the start with exit 1; there is no fallback to the pty |
 | `CLAUDE_AGENT_TMUX_SOCKET`, `CLAUDE_AGENT_TMUX_SESSION` | the tmux server and session; both default `claude-agent` |
 | `CLAUDE_AGENT_RESPAWN` | seconds; start Claude Code again after it exits, keeping the socket |
 
