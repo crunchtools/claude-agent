@@ -538,6 +538,27 @@ class TerminalTest(unittest.TestCase):
             supervisor.timers[-1][1]()
         self.assertEqual(supervisor.state, "idle")
 
+    def test_a_stop_with_no_claude_ready_holds_its_text_for_the_next(self) -> None:
+        # Sent in the respawn gap, or while a Claude Code is still starting.
+        for exits in (True, False):
+            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="30")
+            supervisor.alive = True
+            supervisor.term = mock.Mock()
+            with mock.patch.object(supervisor, "emit"):
+                if exits:
+                    supervisor.reap(1)
+                supervisor.stop("the next prompt")
+                for _, action in [t for t in supervisor.timers if t[1] != supervisor.restart]:
+                    action()
+                self.assertEqual((supervisor.state, supervisor.held), ("starting", ["the next prompt"]))
+                # The next Claude Code's startup screen is still read.
+                supervisor.alive = True
+                supervisor.term.poll.return_value = None
+                supervisor.next_screen_poll = 0.0
+                with mock.patch.object(supervisor, "startup_dialogs") as dialogs:
+                    supervisor.watch()
+                dialogs.assert_called_once()
+
     def test_the_bypass_answer_goes_only_to_the_claude_that_asked(self) -> None:
         for exits in (False, True):
             supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")

@@ -811,7 +811,11 @@ class Supervisor:
 
     def after_stop(self, text: str) -> None:
         self.emit({"event": "stopped"})
-        self.state = "idle"
+        # With no Claude Code ready -- ended and not yet started again, or
+        # still starting -- there is nothing to be idle: the text is held for
+        # the next one, whose startup is still watched.
+        if self.alive and self.state != "starting":
+            self.state = "idle"
         if text.strip():
             self.submit(text)
 
