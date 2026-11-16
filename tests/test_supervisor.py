@@ -538,6 +538,20 @@ class TerminalTest(unittest.TestCase):
             supervisor.timers[-1][1]()
         self.assertEqual(supervisor.state, "idle")
 
+    def test_the_bypass_answer_goes_only_to_the_claude_that_asked(self) -> None:
+        for exits in (False, True):
+            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")
+            supervisor.argv.extend(["--permission-mode", "bypassPermissions"])
+            supervisor.alive = True
+            with mock.patch.object(supervisor, "emit"), mock.patch.object(supervisor, "write") as write:
+                supervisor.startup_dialogs("Bypass Permissions mode")
+                supervisor.timers.pop()[1]()  # DOWN, and ENTER set for later
+                if exits:
+                    supervisor.reap(1)
+                supervisor.timers.pop(0)[1]()  # ENTER, set before any reap's restart
+            keys = [call.args[0] for call in write.call_args_list]
+            self.assertEqual(keys, [b"\x1b[B"] if exits else [b"\x1b[B", b"\r"])
+
     def test_a_tmux_that_cannot_start_claude_ends_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {
