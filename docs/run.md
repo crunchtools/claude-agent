@@ -1,7 +1,7 @@
 # Run it unattended
 
 `claude-agent run` holds an interactive Claude Code session in tmux, or in a
-pty where tmux is not installed, and drives it over a local socket (mode 0600, under `$XDG_RUNTIME_DIR/claude-agent`).
+pty where tmux 3.2 or later is not installed, and drives it over a local socket (mode 0600, under `$XDG_RUNTIME_DIR/claude-agent`).
 Prompts go in; each turn's final answer comes out. `claude-agent-matrix` puts
 that socket on your phone.
 
@@ -47,7 +47,7 @@ $ claude-agent attach            # read-only; tmux prefix d detaches (Ctrl-] in 
 | `CLAUDE_AGENT_MATRIX_HOMESERVER` | turns the bridge on |
 | `CLAUDE_AGENT_MATRIX_TOKEN_FILE` | the agent user's access token |
 | `CLAUDE_AGENT_MATRIX_ALLOW` | comma-separated senders |
-| `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux installed, is tmux. A tmux that is installed but broken fails the start with exit 1; there is no fallback to the pty |
+| `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux 3.2 or later installed, is tmux. Unset, an older tmux is passed over for the pty, with a log line. A tmux that is asked for but older than 3.2, or broken, fails the start with exit 1 |
 | `CLAUDE_AGENT_TMUX_SOCKET`, `CLAUDE_AGENT_TMUX_SESSION` | the tmux server and session; both default `claude-agent` |
 | `CLAUDE_AGENT_RESPAWN` | seconds, at least 2; start Claude Code again after it exits, keeping the socket |
 

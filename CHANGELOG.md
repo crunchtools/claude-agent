@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- The session needs tmux 3.2 or later, whose `attach-session` takes `-f`. The
+  packages recommend `tmux >= 3.2`. An older tmux that is merely installed is
+  passed over for the pty, with a log line; one asked for with
+  `CLAUDE_AGENT_TERMINAL=tmux` stops the start with a message. Before, an old
+  tmux started Claude Code and then took it for dead at every poll, a quiet
+  respawn loop.
+- A tmux that stops answering long enough to be reconnected logs how many
+  typed bytes it never confirmed, which may be lost.
 - In tmux, the supervisor polls the pane, reads the screen and types through
   one control-mode client (`tmux -C`), read in its own loop, in place of a tmux
   command run to the end each time. A tmux server that stops answering no

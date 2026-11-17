@@ -3,7 +3,7 @@ Version: @VERSION@-1
 Architecture: all
 Maintainer: crunchtools <scott.mccarty@crunchtools.com>
 Depends: claude-code, python3 (>= 3.9), bash, jq
-Recommends: tmux
+Recommends: tmux (>= 3.2)
 Section: admin
 Priority: optional
 Homepage: https://github.com/crunchtools/claude-agent

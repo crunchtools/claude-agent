@@ -64,6 +64,8 @@ TMUX_SOCKET = "claude-agent"
 # command of about 3 KB ("command too long"), older tmux more.
 KEYS_PER_COMMAND = 512
 TMUX_TIMEOUT_SECONDS = 10
+# The oldest tmux whose attach-session takes -f, which the control client needs.
+TMUX_MINIMUM = (3, 2)
 PANE_POLL_SECONDS = 0.5
 SCREEN_POLL_SECONDS = 0.25
 SCREEN_CHARS = 20000
@@ -207,6 +209,22 @@ def tmux_env() -> dict[str, str]:
 def quoted(arg: str) -> str:
     """arg as one word of a tmux command line: tmux's parser quotes as a shell does."""
     return "'" + arg.replace("'", "'\\''") + "'"
+
+
+def tmux_version() -> tuple[int, int] | None:
+    """tmux's version as (major, minor); None when it gives none, as a build from git does."""
+    said = tmux("-V")
+    found = re.search(r"(\d+)\.(\d+)", said.stdout.decode())
+    return (int(found[1]), int(found[2])) if said.returncode == 0 and found else None
+
+
+def tmux_too_old() -> str:
+    """Why the installed tmux cannot hold the session, or nothing."""
+    version = tmux_version()
+    if version is None or version >= TMUX_MINIMUM:
+        return ""
+    have, need = ".".join(map(str, version)), ".".join(map(str, TMUX_MINIMUM))
+    return f"tmux {have} is older than {need}, which the session needs"
 
 
 def screen_text(raw: bytes) -> str:
@@ -496,6 +514,8 @@ class Tmux:
         # A pane poll, a screen capture, still to be answered.
         self.polling = False
         self.capturing = False
+        # Bytes sent to type that tmux has not yet said it typed.
+        self.unconfirmed = 0
 
     def taken(self) -> str:
         """Why it cannot start, or nothing.
@@ -504,6 +524,9 @@ class Tmux:
         else ends it) is ended here. One with no supervisor named, or one on
         another host, or one whose supervisor still runs, is left alone.
         """
+        too_old = tmux_too_old()
+        if too_old:
+            return f"{too_old}; install a newer tmux or set CLAUDE_AGENT_TERMINAL=pty"
         target = f"={self.session}:"
         if tmux("has-session", "-t", target).returncode != 0:
             return ""
@@ -575,6 +598,7 @@ class Tmux:
         if self.control:
             self.control.close()
         self.control = None
+        self.unconfirmed = 0
 
     def write(self, keys: bytes) -> None:
         """Bytes into the pane as they are, as a pty write would put them.
@@ -583,14 +607,20 @@ class Tmux:
         a paste's brackets among them, unless given -S, which older tmux lacks.
         """
 
-        def typed(ok: bool, error: str) -> None:
-            if not ok:
-                log(f"could not type into tmux: {error.strip()}")
+        def typed(size: int) -> Callable[[bool, str], None]:
+            def answered(ok: bool, error: str) -> None:
+                self.unconfirmed -= size
+                if not ok:
+                    log(f"could not type into tmux: {error.strip()}")
+
+            return answered
 
         if control := self.connected():
             for start in range(0, len(keys), KEYS_PER_COMMAND):
                 chunk = keys[start : start + KEYS_PER_COMMAND]
-                control.send(["send-keys", "-t", self.pane, "-H", *(f"{key:02x}" for key in chunk)], typed)
+                self.unconfirmed += len(chunk)
+                hexes = (f"{key:02x}" for key in chunk)
+                control.send(["send-keys", "-t", self.pane, "-H", *hexes], typed(len(chunk)))
 
     def capture(self, then: Callable[[str], None]) -> None:
         control = self.connected()
@@ -637,7 +667,10 @@ class Tmux:
             return self.ended
         control = self.connected()
         if control and control.overdue():
-            log("tmux has not answered for a while; reconnecting")
+            lost = (
+                f"; {self.unconfirmed} typed bytes it never confirmed may be lost" if self.unconfirmed else ""
+            )
+            log(f"tmux has not answered for {TMUX_TIMEOUT_SECONDS}s; reconnecting{lost}")
             self.disconnect()
         elif control and not self.polling and time.monotonic() >= self.next_poll:
             self.next_poll = time.monotonic() + PANE_POLL_SECONDS
@@ -777,8 +810,19 @@ class Pty:
 
 
 def terminal(selector: selectors.BaseSelector, on_output: Callable[[bytes], None]) -> Tmux | Pty:
-    """CLAUDE_AGENT_TERMINAL, else tmux when it is installed, else a pty."""
-    choice = os.environ.get("CLAUDE_AGENT_TERMINAL") or ("tmux" if shutil.which("tmux") else "pty")
+    """CLAUDE_AGENT_TERMINAL, else tmux when one new enough is installed, else a pty.
+
+    A tmux too old that was asked for is refused at start (Tmux.taken); one
+    that is merely installed is passed over.
+    """
+    choice = os.environ.get("CLAUDE_AGENT_TERMINAL")
+    if not choice and shutil.which("tmux"):
+        too_old = tmux_too_old()
+        if too_old:
+            log(f"{too_old}; using a pty")
+        choice = "pty" if too_old else "tmux"
+    if not choice:
+        choice = "pty"
     return Pty(selector, on_output) if choice == "pty" else Tmux(selector)
 
 
