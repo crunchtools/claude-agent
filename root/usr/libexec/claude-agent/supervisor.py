@@ -592,6 +592,7 @@ class Tmux:
             return None
         if self.control is None or self.control.ended:
             self.control, self.polling, self.capturing = Control(self.selector, self.pane), False, False
+            self.unconfirmed = 0  # the replaced client's sends are never answered
         return self.control
 
     def disconnect(self) -> None:

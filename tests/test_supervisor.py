@@ -595,6 +595,24 @@ class TerminalTest(unittest.TestCase):
                 term.poll()
         self.assertIn("6 typed bytes", err.getvalue())
 
+    def test_unconfirmed_bytes_of_a_client_that_ended_are_not_carried_over(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        term = module["Tmux"](None)
+        term.pane = "%1"
+        first = mock.Mock(ended=False, attached=True)
+        second = mock.Mock(ended=False)
+        second.overdue.return_value = False
+        clients = iter([first, second])
+        with mock.patch.dict(term.connected.__globals__, {"Control": lambda *args: next(clients)}):
+            term.write(b"abcdef")
+            first.ended = True
+            term.poll()
+            term.write(b"gh")
+            second.overdue.return_value = True
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                term.poll()
+        self.assertIn("2 typed bytes", err.getvalue())
+
     def test_a_tmux_that_fails_to_run_is_a_failed_command(self) -> None:
         module = runpy.run_path(str(SUPERVISOR))
         hung = subprocess.TimeoutExpired(["tmux"], 10)

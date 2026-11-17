@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The count of typed bytes tmux never confirmed, logged at a reconnect, no
+  longer includes those sent to a control client that ended on its own.
+
 ## [1.2.0] - 2026-11-17
 
 ### Changed
