@@ -7,6 +7,7 @@ import io
 import json
 import os
 import runpy
+import selectors
 import shutil
 import signal
 import socket
@@ -609,6 +610,25 @@ class TerminalTest(unittest.TestCase):
         for line in ("%begin 1700000001 1 0", "can't find pane: %1", "%error 1700000001 1 0"):
             control.on_line(line)
         self.assertFalse(control.attached)
+
+    def test_what_tmux_cannot_take_yet_waits_for_it(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        selector = selectors.DefaultSelector()
+        self.addCleanup(selector.close)
+        with mock.patch("subprocess.Popen"):
+            control = module["Control"](selector, "%1")
+        self.addCleanup(control.close)
+
+        def waiting_to_write() -> bool:
+            return control.registered(control.to_tmux)
+
+        with mock.patch("os.write", side_effect=[3, BlockingIOError(), 1]):
+            control.send(["a"], lambda ok, text: None)  # 'a' and a newline, four bytes
+            self.assertEqual((control.pending, waiting_to_write()), (b"\n", True))
+            control.flush()  # the pipe is full
+            self.assertEqual((control.pending, waiting_to_write()), (b"\n", True))
+            control.flush()
+            self.assertEqual((control.pending, waiting_to_write()), (b"", False))
 
     def supervisor(self, **env: str) -> Any:
         with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty", **env}):
