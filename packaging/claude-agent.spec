@@ -14,8 +14,9 @@ Requires:       claude-code
 Requires:       (python3 >= 3.9 or python3.12 or python3.11)
 Requires:       bash
 Requires:       jq
-# Without tmux the session runs in a pty; UBI 10 and Hummingbird do not carry it.
-Recommends:     tmux
+# Without tmux 3.2 or later the session runs in a pty (its control client needs
+# attach-session -f); UBI 10 and Hummingbird carry no tmux at all.
+Recommends:     tmux >= 3.2
 
 %global __os_install_post %{nil}
 %global _build_id_links none

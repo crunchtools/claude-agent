@@ -547,6 +547,54 @@ class TerminalTest(unittest.TestCase):
         self.assertEqual(self.choose(path), "Tmux")
         self.assertEqual(self.choose(path, asked="pty"), "Pty")
 
+    def old_tmux(self) -> str:
+        """A PATH whose tmux is 3.1: attach-session has no -f before 3.2."""
+        stub = tempfile.TemporaryDirectory()
+        self.addCleanup(stub.cleanup)
+        (Path(stub.name) / "tmux").write_text('#!/bin/sh\necho "tmux 3.1c"\n')
+        (Path(stub.name) / "tmux").chmod(0o755)
+        return stub.name
+
+    def test_a_tmux_too_old_is_a_pty_unless_asked_for(self) -> None:
+        path = self.old_tmux()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.choose(path), "Pty")
+        self.assertIn("tmux 3.1 is older than 3.2", err.getvalue())
+        self.assertEqual(self.choose(path, asked="tmux"), "Tmux")
+
+    def test_a_tmux_too_old_that_was_asked_for_refuses_to_start(self) -> None:
+        with mock.patch.dict(os.environ, {"PATH": self.old_tmux()}):
+            term = runpy.run_path(str(SUPERVISOR))["Tmux"](None)
+            self.assertIn("tmux 3.1 is older than 3.2", term.taken())
+
+    def test_a_tmux_version_is_read_from_what_it_says(self) -> None:
+        version = runpy.run_path(str(SUPERVISOR))["tmux_version"]
+        for said, read in (
+            ("tmux 3.5a", (3, 5)),
+            ("tmux next-3.6", (3, 6)),
+            ("tmux 3.0a", (3, 0)),
+            ("tmux master", None),  # built from git: assumed new
+        ):
+            ran = subprocess.CompletedProcess(["tmux"], 0, said.encode() + b"\n", b"")
+            with mock.patch.dict(version.__globals__, {"tmux": lambda *args, ran=ran: ran}):
+                self.assertEqual(version(), read, said)
+
+    def test_keys_tmux_never_confirmed_are_logged_at_a_reconnect(self) -> None:
+        module = runpy.run_path(str(SUPERVISOR))
+        term = module["Tmux"](None)
+        term.pane = "%1"
+        control = mock.Mock(ended=False)
+        control.overdue.return_value = False
+        with mock.patch.dict(term.connected.__globals__, {"Control": lambda *args: control}):
+            term.write(b"hello")
+            # The first send-keys is answered; the rest never are.
+            control.send.call_args.args[1](True, "")
+            term.write(b"world!")
+            control.overdue.return_value = True
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                term.poll()
+        self.assertIn("6 typed bytes", err.getvalue())
+
     def test_a_tmux_that_fails_to_run_is_a_failed_command(self) -> None:
         module = runpy.run_path(str(SUPERVISOR))
         hung = subprocess.TimeoutExpired(["tmux"], 10)
