@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-17
+
 ### Changed
 - The session needs tmux 3.2 or later, whose `attach-session` takes `-f`. The
   packages recommend `tmux >= 3.2`. An older tmux that is merely installed is
