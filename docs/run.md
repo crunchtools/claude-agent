@@ -49,7 +49,7 @@ $ claude-agent attach            # read-only; tmux prefix d detaches (Ctrl-] in 
 | `CLAUDE_AGENT_MATRIX_ALLOW` | comma-separated senders |
 | `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux installed, is tmux. A tmux that is installed but broken fails the start with exit 1; there is no fallback to the pty |
 | `CLAUDE_AGENT_TMUX_SOCKET`, `CLAUDE_AGENT_TMUX_SESSION` | the tmux server and session; both default `claude-agent` |
-| `CLAUDE_AGENT_RESPAWN` | seconds; start Claude Code again after it exits, keeping the socket |
+| `CLAUDE_AGENT_RESPAWN` | seconds, at least 2; start Claude Code again after it exits, keeping the socket |
 
 ## Related
 

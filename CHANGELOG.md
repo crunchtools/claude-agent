@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- In tmux, the supervisor polls the pane, reads the screen and types through
+  one control-mode client (`tmux -C`), read in its own loop, in place of a tmux
+  command run to the end each time. A tmux server that stops answering no
+  longer holds up the control socket, and the hooks with it, for up to 10
+  seconds a poll. Starting Claude Code and signalling it still run a tmux
+  command each (#30).
+- `CLAUDE_AGENT_RESPAWN` has a floor of 2 seconds; a shorter delay is raised
+  to it, with a log line (#33).
+
+### Fixed
+- A paste's Enter, a stop's Escape and a dialog's answer, each timed, reach
+  only the Claude Code they were meant for. In tmux, one that ended in that
+  window was replaced in the same pane, and the key landed on the next one's
+  startup screen, where Enter on the bypass warning exits. A stop no longer
+  sends Escape to a Claude Code still at its startup screens, and an answer
+  whose Claude Code ended waits for the next one (#33).
+- A supervisor that was killed outright (SIGKILL, with no systemd to end the
+  tmux server too) no longer blocks the next one. The session names its
+  supervisor in a tmux option, and `claude-agent run` ends a session whose
+  supervisor is gone. One with no supervisor named, as 1.1.0 left them, is
+  still refused (#32).
+- In tmux, a restart that failed is tried again in the same pane. It used to
+  forget the pane, so every later attempt asked for a new session under a name
+  that was still taken and failed too, for good (#31).
+
 ## [1.1.0] - 2026-11-16
 
 ### Added
