@@ -105,6 +105,7 @@ classification = "by_design"
 [[exceptions]]
 check = "EV009-discarded_errors"
 path = "root/usr/libexec/claude-agent/hooks.py"
-pattern = "could not tighten"
+item = "exc"
+line = 153
 justification = "The caught exception IS used, in the f-string one line below, inside a `with contextlib.suppress(OSError)` block that the check does not descend into. The suppression is required: print() to a closed stderr raises BrokenPipeError, an OSError, which would otherwise escape this handler and break the audit write."
 classification = "gourmand_bug"

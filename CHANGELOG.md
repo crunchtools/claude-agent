@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The `discarded_errors` exception on `hooks.py` now names its finding by
+  item and line (`exc`, 153) rather than by the log text `could not tighten`,
+  which the finding does not contain. Gourmand is about to honour `pattern`
+  (crunchtools/gourmand#43), and the old text would have stopped suppressing it.
 - The count of typed bytes tmux never confirmed, logged at a reconnect, no
   longer includes those sent to a control client that ended on its own.
 
