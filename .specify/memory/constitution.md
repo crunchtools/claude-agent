@@ -44,7 +44,11 @@ Packages are published only as release assets, signed and served by
 crunchtools/packages. The root `Containerfile` is a reference built in CI from
 the packages under test; it is not published. The `examples/` Containerfiles
 (UBI, Debian, Hummingbird) and Quadlet unit ship in the core package's docs;
-CI builds each from the published repositories on every change.
+CI builds each from the published repositories on every change. The one
+exception is a package rename: until the release that publishes the new name
+reaches the repositories, there is nothing under it to install, so the builds
+are skipped with a notice while the Quadlet check still runs. A probe of the
+published index decides, and a probe that cannot reach it fails.
 
 ## Layer 4 — Runtime Security & Behavioral Controls
 
