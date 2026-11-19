@@ -31,7 +31,7 @@ import tty
 import uuid
 from pathlib import Path
 
-HOOKS = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent/hooks.py"
+HOOKS = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-supervisor/hooks.py"
 PASTE_START, PASTE_END = "\x1b[200~", "\x1b[201~"
 DIR = Path(os.environ["FAKE_CLAUDE_DIR"])
 

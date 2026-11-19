@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-HOOKS = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent/hooks.py"
+HOOKS = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-supervisor/hooks.py"
 
 # root/ mirrors the install tree; keep the import from writing bytecode into it.
 sys.dont_write_bytecode = True
@@ -23,6 +23,9 @@ hooks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hooks)
 
 
+OWN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE_AGENT")}
+
+
 def run_hook(mode: str, event: object, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     payload = event if isinstance(event, str) else json.dumps(event)
     return subprocess.run(
@@ -30,7 +33,8 @@ def run_hook(mode: str, event: object, env: dict[str, str]) -> subprocess.Comple
         input=payload,
         capture_output=True,
         text=True,
-        env={**os.environ, "CLAUDE_AGENT": "1", **env},
+        # The 1.x names stand in for unset new ones; a seat running these sets them.
+        env={**OWN_ENV, "CLAUDE_SUPERVISOR": "1", **env},
         check=False,
     )
 
@@ -48,7 +52,7 @@ class AuditTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
-        self.env = {"CLAUDE_AGENT_AUDIT_DIR": tmp.name}
+        self.env = {"CLAUDE_SUPERVISOR_AUDIT_DIR": tmp.name}
 
     def test_audit_log_and_directory_are_owner_only(self) -> None:
         """The record of what the agent did is not group or world readable."""
@@ -159,10 +163,10 @@ class BreakerTest(unittest.TestCase):
         self.state = Path(tmp.name) / "breaker"
         self.audit = Path(tmp.name) / "audit"
         self.env = {
-            "CLAUDE_AGENT_BREAKER_DIR": str(self.state),
-            "CLAUDE_AGENT_AUDIT_DIR": str(self.audit),
-            "CLAUDE_AGENT_MAX_TOOL_CALLS": "6",
-            "CLAUDE_AGENT_MAX_REPEAT": "3",
+            "CLAUDE_SUPERVISOR_BREAKER_DIR": str(self.state),
+            "CLAUDE_SUPERVISOR_AUDIT_DIR": str(self.audit),
+            "CLAUDE_SUPERVISOR_MAX_TOOL_CALLS": "6",
+            "CLAUDE_SUPERVISOR_MAX_REPEAT": "3",
         }
 
     def call(self, command: str, session: str = "s1") -> str | None:
@@ -216,11 +220,11 @@ class BreakerTest(unittest.TestCase):
     def test_unwritable_state_directory_denies(self) -> None:
         blocker = Path(self.state.parent) / "file"
         blocker.write_text("")
-        self.env["CLAUDE_AGENT_BREAKER_DIR"] = str(blocker / "breaker")
+        self.env["CLAUDE_SUPERVISOR_BREAKER_DIR"] = str(blocker / "breaker")
         self.assertIn("breaker state unavailable", self.denial("ls"))
 
     def test_default_state_directory_is_per_user_runtime(self) -> None:
-        env = {k: v for k, v in self.env.items() if k != "CLAUDE_AGENT_BREAKER_DIR"}
+        env = {k: v for k, v in self.env.items() if k != "CLAUDE_SUPERVISOR_BREAKER_DIR"}
         env["XDG_RUNTIME_DIR"] = str(self.state.parent / "run")
         self.env = env
         self.assertIsNone(self.call("ls"))
@@ -259,7 +263,7 @@ class EventTest(unittest.TestCase):
         self.server.settimeout(5)
 
     def received(self, event: dict) -> dict:
-        result = run_hook("event", event, {"CLAUDE_AGENT_SOCKET": str(self.path)})
+        result = run_hook("event", event, {"CLAUDE_SUPERVISOR_SOCKET": str(self.path)})
         self.assertEqual((result.returncode, result.stdout), (0, ""))
         conn, _ = self.server.accept()
         with conn:
@@ -299,11 +303,11 @@ class EventTest(unittest.TestCase):
         self.assertNotIn("tool_input", bash)
 
     def test_no_socket_no_supervisor_nothing_sent(self) -> None:
-        result = run_hook("event", {"hook_event_name": "Stop"}, {"CLAUDE_AGENT_SOCKET": ""})
+        result = run_hook("event", {"hook_event_name": "Stop"}, {"CLAUDE_SUPERVISOR_SOCKET": ""})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
 
     def test_a_supervisor_that_is_gone_does_not_stop_the_turn(self) -> None:
-        gone = {"CLAUDE_AGENT_SOCKET": str(self.path) + ".gone"}
+        gone = {"CLAUDE_SUPERVISOR_SOCKET": str(self.path) + ".gone"}
         result = run_hook("event", {"hook_event_name": "Stop"}, gone)
         # 1 is reported and the turn goes on; 2 is the one code that would block it.
         self.assertEqual(result.returncode, 1)
@@ -313,10 +317,14 @@ class EventTest(unittest.TestCase):
 class GateTest(unittest.TestCase):
     """Managed settings reach every session on the machine; only an agent's count."""
 
-    def test_hooks_do_nothing_without_claude_agent(self) -> None:
+    def test_hooks_do_nothing_without_claude_supervisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            env = {k: v for k, v in os.environ.items() if k != "CLAUDE_AGENT"}
-            env.update(CLAUDE_AGENT_AUDIT_DIR=tmp, CLAUDE_AGENT_BREAKER_DIR=tmp, CLAUDE_AGENT_MAX_REPEAT="1")
+            env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_SUPERVISOR", "CLAUDE_AGENT")}
+            env.update(
+                CLAUDE_SUPERVISOR_AUDIT_DIR=tmp,
+                CLAUDE_SUPERVISOR_BREAKER_DIR=tmp,
+                CLAUDE_SUPERVISOR_MAX_REPEAT="1",
+            )
             event = json.dumps({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}})
             for mode in ("breaker", "breaker", "audit"):
                 result = subprocess.run(
@@ -329,6 +337,34 @@ class GateTest(unittest.TestCase):
                 )
                 self.assertEqual((result.returncode, result.stdout), (0, ""))
             self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
+class OldNamesTest(unittest.TestCase):
+    """CLAUDE_AGENT and CLAUDE_AGENT_*, the 1.x names, until 3.0.0."""
+
+    def audit(self, **settings: str) -> subprocess.CompletedProcess[str]:
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_SUPERVISOR", "CLAUDE_AGENT"))}
+        event = {"session_id": "old", "tool_name": "Bash", "tool_input": {}, "tool_response": {}}
+        return subprocess.run(
+            [sys.executable, str(HOOKS), "audit"],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            env={**env, **settings},
+            check=False,
+        )
+
+    def test_the_old_names_turn_the_hooks_on_silently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.audit(CLAUDE_AGENT="1", CLAUDE_AGENT_AUDIT_DIR=tmp)
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            self.assertEqual(len(read_records(Path(tmp))), 1)
+
+    def test_a_new_name_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as old, tempfile.TemporaryDirectory() as new:
+            result = self.audit(CLAUDE_AGENT="1", CLAUDE_AGENT_AUDIT_DIR=old, CLAUDE_SUPERVISOR_AUDIT_DIR=new)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual((len(read_records(Path(old))), len(read_records(Path(new)))), (0, 1))
 
 
 if __name__ == "__main__":

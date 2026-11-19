@@ -1,4 +1,4 @@
-"""The claude-agent command line: version, status, usage and exit codes."""
+"""The claude-supervisor command line: version, status, usage and exit codes."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 import unittest
 from pathlib import Path
 
-CLI = Path(__file__).resolve().parent.parent / "root/usr/bin/claude-agent"
+CLI = Path(__file__).resolve().parent.parent / "root/usr/bin/claude-supervisor"
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 # Run from inside tmux, as on a seat, every tmux these tests start would
 # otherwise default to the server holding the person's own session.
@@ -31,16 +31,31 @@ class CliTest(unittest.TestCase):
     def test_version(self) -> None:
         result = run("--version")
         self.assertEqual(result.returncode, 0)
-        self.assertRegex(result.stdout, r"^claude-agent \d+\.\d+\.\d+\n$")
+        self.assertRegex(result.stdout, r"^claude-supervisor \d+\.\d+\.\d+\n$")
+
+    def test_claude_agent_is_an_alias_until_3(self) -> None:
+        alias = CLI.with_name("claude-agent")
+        self.assertEqual(os.readlink(alias), "claude-supervisor")
+        result = subprocess.run(
+            [sys.executable, str(alias), "--version"], capture_output=True, text=True, check=False
+        )
+        self.assertRegex(result.stdout, r"^claude-supervisor \d+\.\d+\.\d+\n$")
+
+    def test_old_settings_are_read_with_a_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as runtime:
+            result = run("stop", env={"CLAUDE_AGENT_RUNTIME_DIR": runtime, "TMUX_TMPDIR": runtime})
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("CLAUDE_AGENT_RUNTIME_DIR is deprecated", result.stderr)
+            self.assertIn("no session is running", result.stderr)
 
     def test_usage_error_exits_2(self) -> None:
         result = run("frobnicate")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("claude-agent status", result.stderr)
+        self.assertIn("claude-supervisor status", result.stderr)
 
     def test_requests_without_a_session_exit_1(self) -> None:
         with tempfile.TemporaryDirectory() as runtime:
-            env = {"CLAUDE_AGENT_RUNTIME_DIR": runtime, "TMUX_TMPDIR": runtime}
+            env = {"CLAUDE_SUPERVISOR_RUNTIME_DIR": runtime, "TMUX_TMPDIR": runtime}
             for args in (["send", "hi"], ["stop"], ["attach"]):
                 result = run(*args, env=env)
                 self.assertEqual(result.returncode, 1, args)
@@ -49,8 +64,8 @@ class CliTest(unittest.TestCase):
     def test_run_holds_a_session_that_send_reaches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {
-                "CLAUDE_AGENT_RUNTIME_DIR": tmp,
-                "CLAUDE_AGENT_CLAUDE": str(FAKE),
+                "CLAUDE_SUPERVISOR_RUNTIME_DIR": tmp,
+                "CLAUDE_SUPERVISOR_CLAUDE": str(FAKE),
                 "FAKE_CLAUDE_DIR": tmp,
                 "TMUX_TMPDIR": tmp,
             }
@@ -91,10 +106,10 @@ class CliTest(unittest.TestCase):
 
     def start(self, tmp: str, **extra: str) -> subprocess.Popen[str]:
         # TMUX_TMPDIR: a tmux server under tmp, not the shared one in
-        # /tmp/tmux-UID that a real claude-agent on this host uses.
+        # /tmp/tmux-UID that a real supervisor on this host uses.
         env = {
-            "CLAUDE_AGENT_RUNTIME_DIR": tmp,
-            "CLAUDE_AGENT_CLAUDE": str(FAKE),
+            "CLAUDE_SUPERVISOR_RUNTIME_DIR": tmp,
+            "CLAUDE_SUPERVISOR_CLAUDE": str(FAKE),
             "FAKE_CLAUDE_DIR": tmp,
             "TMUX_TMPDIR": tmp,
             **extra,
@@ -130,7 +145,7 @@ class CliTest(unittest.TestCase):
 
     def test_send_wait_waits_for_its_own_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            env = {"CLAUDE_AGENT_RUNTIME_DIR": tmp}
+            env = {"CLAUDE_SUPERVISOR_RUNTIME_DIR": tmp}
             agent = self.start(tmp)
             self.assertEqual(run("send", "slow 2", env=env).returncode, 0)
             time.sleep(0.5)
@@ -146,11 +161,11 @@ class CliTest(unittest.TestCase):
             # No token file: the bridge exits at once, every time.
             agent = self.start(
                 tmp,
-                CLAUDE_AGENT_MATRIX_HOMESERVER="http://127.0.0.1:9",
-                CLAUDE_AGENT_MATRIX_TOKEN_FILE=str(Path(tmp) / "missing"),
+                CLAUDE_SUPERVISOR_MATRIX_HOMESERVER="http://127.0.0.1:9",
+                CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE=str(Path(tmp) / "missing"),
             )
             time.sleep(6.5)
-            run("send", "exit", env={"CLAUDE_AGENT_RUNTIME_DIR": tmp})
+            run("send", "exit", env={"CLAUDE_SUPERVISOR_RUNTIME_DIR": tmp})
             self.assertEqual(agent.wait(10), 3)
             assert agent.stderr is not None  # stderr=PIPE
             log = agent.stderr.read()

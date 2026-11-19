@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-BRIDGE = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent/matrix-bridge.py"
+BRIDGE = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-supervisor/matrix-bridge.py"
 ME = "@agent1:example.org"
 OWNER = "@alice:example.org"
 STRANGER = "@mallory:example.org"
@@ -192,11 +192,11 @@ class MatrixBridgeTest(unittest.TestCase):
             (self.root / "sync").write_text(since)
         env = {
             **os.environ,
-            "CLAUDE_AGENT_MATRIX_HOMESERVER": self.hs.url,
-            "CLAUDE_AGENT_MATRIX_TOKEN_FILE": str(self.root / "token"),
-            "CLAUDE_AGENT_MATRIX_ALLOW": f"{OWNER}, ",
-            "CLAUDE_AGENT_MATRIX_STATE": str(self.root / "sync"),
-            "CLAUDE_AGENT_SOCKET": str(self.root / "control.sock"),
+            "CLAUDE_SUPERVISOR_MATRIX_HOMESERVER": self.hs.url,
+            "CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE": str(self.root / "token"),
+            "CLAUDE_SUPERVISOR_MATRIX_ALLOW": f"{OWNER}, ",
+            "CLAUDE_SUPERVISOR_MATRIX_STATE": str(self.root / "sync"),
+            "CLAUDE_SUPERVISOR_SOCKET": str(self.root / "control.sock"),
         }
         self.proc = subprocess.Popen([sys.executable, str(BRIDGE)], env=env, stderr=subprocess.DEVNULL)
         self.addCleanup(self.stop)
@@ -245,7 +245,7 @@ class MatrixBridgeTest(unittest.TestCase):
         self.text("check the deploy")
         self.text("/help")
         self.texted()
-        self.assertEqual(self.hs.agents, {"claude-agent-matrix"})
+        self.assertEqual(self.hs.agents, {"claude-supervisor-matrix"})
 
     def test_strangers_are_dropped(self) -> None:
         self.text("hello", sender=STRANGER)
@@ -410,8 +410,8 @@ class PlaintextTest(unittest.TestCase):
             (Path(tmp) / "token").write_text("tok")
             env = {
                 **os.environ,
-                "CLAUDE_AGENT_MATRIX_HOMESERVER": "http://8.8.8.8",
-                "CLAUDE_AGENT_MATRIX_TOKEN_FILE": str(Path(tmp) / "token"),
+                "CLAUDE_SUPERVISOR_MATRIX_HOMESERVER": "http://8.8.8.8",
+                "CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE": str(Path(tmp) / "token"),
             }
             result = subprocess.run(
                 [sys.executable, str(BRIDGE)],

@@ -4,16 +4,16 @@
     hooks.py audit     PostToolUse. One JSON line per tool call.
     hooks.py breaker   PreToolUse. Denies a conversation that has run away.
     hooks.py event     The turn's events, handed to the supervisor that
-                       started this session (CLAUDE_AGENT_SOCKET), if any.
+                       started this session (CLAUDE_SUPERVISOR_SOCKET), if any.
 
-Both read the hook event on stdin, and both do nothing unless CLAUDE_AGENT=1
+Both read the hook event on stdin, and both do nothing unless CLAUDE_SUPERVISOR=1
 is set: managed settings reach every Claude Code session on the machine, and
 only an agent's sessions are meant to be counted and logged. The supervisor
 sets it for the sessions it starts; an agent image sets it for everything.
 
-Where they write: CLAUDE_AGENT_AUDIT_DIR (default
-$XDG_STATE_HOME/claude-agent/audit), kept CLAUDE_AGENT_AUDIT_RETENTION_DAYS
-(default 120), and CLAUDE_AGENT_BREAKER_DIR (default
+Where they write: CLAUDE_SUPERVISOR_AUDIT_DIR (default
+$XDG_STATE_HOME/claude-agent/audit), kept CLAUDE_SUPERVISOR_AUDIT_RETENTION_DAYS
+(default 120), and CLAUDE_SUPERVISOR_BREAKER_DIR (default
 $XDG_RUNTIME_DIR/claude-agent/breaker, or a per-user directory in /tmp),
 whose files go after a week without a call.
 
@@ -59,13 +59,24 @@ SECRET_FIELD = re.compile(
 )
 
 
+def adopt_old_names() -> None:
+    """CLAUDE_AGENT and CLAUDE_AGENT_*, the 1.x names, where the new ones are unset.
+
+    supervisor.py's adopt_old_names, without its warning: a hook runs on every
+    tool call, and the supervisor or the CLI has already said it once. Goes in 3.0.0.
+    """
+    for old, value in list(os.environ.items()):
+        if old == "CLAUDE_AGENT" or old.startswith("CLAUDE_AGENT_"):
+            os.environ.setdefault("CLAUDE_SUPERVISOR" + old[len("CLAUDE_AGENT") :], value)
+
+
 def enabled() -> bool:
-    return os.environ.get("CLAUDE_AGENT") == "1"
+    return os.environ.get("CLAUDE_SUPERVISOR") == "1"
 
 
 def audit_dir() -> Path:
     state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
-    return Path(os.environ.get("CLAUDE_AGENT_AUDIT_DIR") or Path(state) / "claude-agent/audit")
+    return Path(os.environ.get("CLAUDE_SUPERVISOR_AUDIT_DIR") or Path(state) / "claude-agent/audit")
 
 
 def breaker_dir() -> Path:
@@ -75,7 +86,7 @@ def breaker_dir() -> Path:
         if runtime
         else Path(tempfile.gettempdir()) / f"claude-agent-{os.getuid()}"
     )
-    return Path(os.environ.get("CLAUDE_AGENT_BREAKER_DIR") or default / "breaker")
+    return Path(os.environ.get("CLAUDE_SUPERVISOR_BREAKER_DIR") or default / "breaker")
 
 
 def redact(value: Any, key: str = "") -> Any:
@@ -178,7 +189,7 @@ def append(record: dict[str, Any]) -> None:
     path = directory / f"audit-{record['timestamp'][:10]}.jsonl"
     if not path.exists():
         # Once a day, when the day's file starts, the oldest ones go.
-        days = limit("CLAUDE_AGENT_AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
+        days = limit("CLAUDE_SUPERVISOR_AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
         prune(directory, "audit-*.jsonl", days)
     # O_APPEND keeps concurrent sessions' lines whole. 0o600, not 0o640: this
     # file is the record of what the agent was asked to do and what it answered,
@@ -242,8 +253,8 @@ def breaker(event: dict[str, Any]) -> str | None:
         reason = count(
             state,
             fingerprint(event),
-            limit("CLAUDE_AGENT_MAX_TOOL_CALLS", DEFAULT_MAX_TOOL_CALLS),
-            limit("CLAUDE_AGENT_MAX_REPEAT", DEFAULT_MAX_REPEAT),
+            limit("CLAUDE_SUPERVISOR_MAX_TOOL_CALLS", DEFAULT_MAX_TOOL_CALLS),
+            limit("CLAUDE_SUPERVISOR_MAX_REPEAT", DEFAULT_MAX_REPEAT),
         )
         handle.seek(0)
         handle.truncate()
@@ -271,7 +282,7 @@ DIALOG_TOOLS = ("AskUserQuestion", "ExitPlanMode")
 
 def forward(event: dict[str, Any]) -> None:
     """Hand one hook event to the supervisor. A session it did not start has no socket."""
-    path = os.environ.get("CLAUDE_AGENT_SOCKET")
+    path = os.environ.get("CLAUDE_SUPERVISOR_SOCKET")
     if not path:
         return
     message = {key: event[key] for key in EVENT_FIELDS if key in event}
@@ -301,6 +312,7 @@ def main(argv: list[str]) -> int:
     if mode not in (["audit"], ["breaker"], ["event"]):
         print("usage: hooks.py audit|breaker|event  (hook event on stdin)", file=sys.stderr)
         return 1
+    adopt_old_names()
     if not enabled():
         return 0
     if mode == ["audit"]:

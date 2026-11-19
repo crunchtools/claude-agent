@@ -1,6 +1,6 @@
 # Where CI runs the supervisor's tmux cases: the python-sdlc image has no tmux,
 # by design, so they run here, through `pytest-in-image` (pyproject.toml,
-# [tool.sdlc.ci]). Debian, because it packages tmux and claude-agent ships a
+# [tool.sdlc.ci]). Debian, because it packages tmux and claude-supervisor ships a
 # deb; UBI 10 and Hummingbird do not carry tmux. python-is-python3 because
 # pytest-in-image starts `python`.
 FROM docker.io/library/debian:13-slim
