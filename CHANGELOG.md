@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Gatehouse triage gets `review_result` from the review job, so a pull request
+  whose review died before posting anything is held instead of passing.
+
 ### Fixed
 - The `discarded_errors` exception on `hooks.py` now names its finding by
   item and line (`exc`, 153) rather than by the log text `could not tighten`,
