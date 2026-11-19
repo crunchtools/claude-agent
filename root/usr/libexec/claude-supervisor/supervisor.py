@@ -4,11 +4,11 @@
     supervisor.py [claude arguments...]
 
 With tmux installed, Claude Code runs in tmux session CLAUDE_SUPERVISOR_TMUX_SESSION
-(default claude-supervisor) on a tmux server of its own, socket name
-CLAUDE_SUPERVISOR_TMUX_SOCKET (default claude-supervisor), which a person reaches with
-`claude-supervisor attach` at their own terminal's size. Without it, Claude Code
-runs in a pseudo-terminal of fixed size that the socket relays.
-CLAUDE_SUPERVISOR_TERMINAL=tmux or pty chooses. Everything else talks to this
+on a tmux server of its own, socket name CLAUDE_SUPERVISOR_TMUX_SOCKET, which a
+person reaches with `claude-supervisor attach` at their own terminal's size. Both
+default to claude-agent, the 1.x name, through 2.x, and change in 3.0.0. Without
+tmux, Claude Code runs in a pseudo-terminal of fixed size that the socket
+relays. CLAUDE_SUPERVISOR_TERMINAL=tmux or pty chooses. Everything else talks to this
 process over a unix socket (CLAUDE_SUPERVISOR_SOCKET, under
 CLAUDE_SUPERVISOR_RUNTIME_DIR), one JSON object per line:
 
