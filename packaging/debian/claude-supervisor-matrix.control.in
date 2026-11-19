@@ -1,0 +1,15 @@
+Package: claude-supervisor-matrix
+Version: @VERSION@-1
+Architecture: all
+Maintainer: crunchtools <scott.mccarty@crunchtools.com>
+Depends: claude-supervisor (= @VERSION@-1)
+Provides: claude-agent-matrix (= @VERSION@-1)
+Replaces: claude-agent-matrix (<< @VERSION@-1)
+Breaks: claude-agent-matrix (<< @VERSION@-1)
+Section: admin
+Priority: optional
+Homepage: https://github.com/crunchtools/claude-supervisor
+Description: reach a claude-supervisor session by Matrix text
+ A bridge that carries texts from allowed Matrix senders to the session that
+ claude-supervisor run holds, and texts back each turn's final answer and command
+ results, with a typing indicator while a turn runs.

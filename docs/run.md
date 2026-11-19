@@ -1,8 +1,8 @@
 # Run it unattended
 
-`claude-agent run` holds an interactive Claude Code session in tmux, or in a
+`claude-supervisor run` holds an interactive Claude Code session in tmux, or in a
 pty where tmux 3.2 or later is not installed, and drives it over a local socket (mode 0600, under `$XDG_RUNTIME_DIR/claude-agent`).
-Prompts go in; each turn's final answer comes out. `claude-agent-matrix` puts
+Prompts go in; each turn's final answer comes out. `claude-supervisor-matrix` puts
 that socket on your phone.
 
 ## Why it matters
@@ -16,10 +16,10 @@ hooks, not the screen.
 - Texts sent mid-turn are held and sent as one prompt when the turn ends.
 - `!` and unlisted `/` commands are never typed.
 - In tmux, the session is on its own server (`tmux -L claude-agent`), so
-  `claude-agent attach` sizes it to your terminal and Remote Control and the
+  `claude-supervisor attach` sizes it to your terminal and Remote Control and the
   Matrix bridge carry on while you watch. In a pty it stays 160×50.
 - `/stop [text]` interrupts, then sends `text`.
-- Matrix: only senders in `CLAUDE_AGENT_MATRIX_ALLOW`, only in a one-to-one
+- Matrix: only senders in `CLAUDE_SUPERVISOR_MATRIX_ALLOW`, only in a one-to-one
   room, checked again before each answer. Plain `http` only to loopback or a private network.
   You get a typing bubble, then the final answer. Notices are ignored.
 
@@ -34,22 +34,22 @@ hooks, not the screen.
 ## Example
 
 ```console
-$ claude-agent run -- --permission-mode acceptEdits &
-$ claude-agent send --wait "Reply with exactly: pong"
+$ claude-supervisor run -- --permission-mode acceptEdits &
+$ claude-supervisor send --wait "Reply with exactly: pong"
 pong
-$ claude-agent status | tail -1
+$ claude-supervisor status | tail -1
 session:               idle, 0 held, pid 4242, tmux -L claude-agent
-$ claude-agent attach            # read-only; tmux prefix d detaches (Ctrl-] in a pty)
+$ claude-supervisor attach            # read-only; tmux prefix d detaches (Ctrl-] in a pty)
 ```
 
 | Variable | Meaning |
 |----------|---------|
-| `CLAUDE_AGENT_MATRIX_HOMESERVER` | turns the bridge on |
-| `CLAUDE_AGENT_MATRIX_TOKEN_FILE` | the agent user's access token |
-| `CLAUDE_AGENT_MATRIX_ALLOW` | comma-separated senders |
-| `CLAUDE_AGENT_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux 3.2 or later installed, is tmux. Unset, an older tmux is passed over for the pty, with a log line. A tmux that is asked for but older than 3.2, or broken, fails the start with exit 1 |
-| `CLAUDE_AGENT_TMUX_SOCKET`, `CLAUDE_AGENT_TMUX_SESSION` | the tmux server and session; both default `claude-agent` |
-| `CLAUDE_AGENT_RESPAWN` | seconds, at least 2; start Claude Code again after it exits, keeping the socket |
+| `CLAUDE_SUPERVISOR_MATRIX_HOMESERVER` | turns the bridge on |
+| `CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE` | the agent user's access token |
+| `CLAUDE_SUPERVISOR_MATRIX_ALLOW` | comma-separated senders |
+| `CLAUDE_SUPERVISOR_TERMINAL` | `pty` forces the pty; anything else, or unset with tmux 3.2 or later installed, is tmux. Unset, an older tmux is passed over for the pty, with a log line. A tmux that is asked for but older than 3.2, or broken, fails the start with exit 1 |
+| `CLAUDE_SUPERVISOR_TMUX_SOCKET`, `CLAUDE_SUPERVISOR_TMUX_SESSION` | the tmux server and session; both default `claude-agent`, the 1.x name, which stays through 2.x so tools that address the pane keep working |
+| `CLAUDE_SUPERVISOR_RESPAWN` | seconds, at least 2; start Claude Code again after it exits, keeping the socket |
 
 ## Related
 

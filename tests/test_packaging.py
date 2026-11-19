@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 TOP = Path(__file__).resolve().parent.parent
-SPEC = (TOP / "packaging/claude-agent.spec").read_text()
+SPEC = (TOP / "packaging/claude-supervisor.spec").read_text()
 
 
 def manifest() -> list[tuple[str, str, str]]:
@@ -29,7 +29,7 @@ def spec_files() -> dict[str, set[str]]:
     for line in SPEC.splitlines():
         header = re.match(r"%files(?:\s+(\S+))?$", line)
         if header:
-            package = "claude-agent" + (f"-{header[1]}" if header[1] else "")
+            package = "claude-supervisor" + (f"-{header[1]}" if header[1] else "")
             found[package] = set()
         elif package and line.startswith("%") and not line.startswith(KEEP):
             package = None
@@ -68,25 +68,38 @@ class PackagingTest(unittest.TestCase):
 
     def test_stage_installs_one_package_with_its_modes(self) -> None:
         with tempfile.TemporaryDirectory() as dest:
-            subprocess.run([str(TOP / "packaging/stage.sh"), "claude-agent-trentina", dest], check=True)
+            subprocess.run([str(TOP / "packaging/stage.sh"), "claude-supervisor-trentina", dest], check=True)
             staged = sorted("/" + str(p.relative_to(dest)) for p in Path(dest).rglob("*") if p.is_file())
-            expected = sorted(p for pkg, _, p in manifest() if pkg == "claude-agent-trentina")
+            expected = sorted(p for pkg, _, p in manifest() if pkg == "claude-supervisor-trentina")
             self.assertEqual(staged, expected)
             for _, mode, path in manifest():
                 installed = Path(dest) / path.lstrip("/")
-                if installed.exists():
+                if installed.exists() and mode != "link":
                     self.assertEqual(oct(installed.stat().st_mode & 0o777)[2:], mode[1:])
+
+    def test_links_stage_as_links(self) -> None:
+        links = [path for _, mode, path in manifest() if mode == "link"]
+        self.assertIn("/usr/bin/claude-agent", links)
+        with tempfile.TemporaryDirectory() as dest:
+            subprocess.run([str(TOP / "packaging/stage.sh"), "claude-supervisor", dest], check=True)
+            for path in links:
+                staged = Path(dest) / path.lstrip("/")
+                self.assertTrue(staged.is_symlink(), path)
+                self.assertEqual(staged.readlink(), (TOP / "root" / path.lstrip("/")).readlink())
+                self.assertTrue(staged.resolve().is_file(), path)
 
     def test_core_package_carries_license_and_docs(self) -> None:
         with tempfile.TemporaryDirectory() as dest:
-            subprocess.run([str(TOP / "packaging/stage.sh"), "claude-agent", dest], check=True)
-            self.assertTrue((Path(dest) / "usr/share/licenses/claude-agent/LICENSE").is_file())
-            self.assertTrue((Path(dest) / "usr/share/doc/claude-agent/CHANGELOG.md").is_file())
-            examples = sorted(p.name for p in (Path(dest) / "usr/share/doc/claude-agent/examples").iterdir())
+            subprocess.run([str(TOP / "packaging/stage.sh"), "claude-supervisor", dest], check=True)
+            self.assertTrue((Path(dest) / "usr/share/licenses/claude-supervisor/LICENSE").is_file())
+            self.assertTrue((Path(dest) / "usr/share/doc/claude-supervisor/CHANGELOG.md").is_file())
+            examples = sorted(
+                p.name for p in (Path(dest) / "usr/share/doc/claude-supervisor/examples").iterdir()
+            )
             self.assertEqual(examples, sorted(p.name for p in (TOP / "examples").iterdir()))
 
     def test_cli_version_has_a_changelog_entry(self) -> None:
-        match = re.search(r'^VERSION = "([^"]+)"', (TOP / "root/usr/bin/claude-agent").read_text(), re.M)
+        match = re.search(r'^VERSION = "([^"]+)"', (TOP / "root/usr/bin/claude-supervisor").read_text(), re.M)
         assert match, "no VERSION in the CLI"
         version = match[1]
         self.assertIn(f"## [{version}]", (TOP / "CHANGELOG.md").read_text())

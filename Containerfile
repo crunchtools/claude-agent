@@ -1,4 +1,4 @@
-# A reference agent image: Claude Code plus claude-agent on UBI 10.
+# A reference agent image: Claude Code plus claude-supervisor on UBI 10.
 #
 # This is the "build your own" starting point the docs describe, not an image
 # crunchtools publishes. CI builds it from the packages it has just built
@@ -6,18 +6,18 @@
 # repositories, as a user's build would.
 #
 #   podman build -t my-agent .
-#   podman run --rm my-agent claude-agent status
+#   podman run --rm my-agent claude-supervisor status
 
 FROM registry.access.redhat.com/ubi10/ubi:latest
 
 LABEL maintainer="crunchtools <scott.mccarty@crunchtools.com>"
-LABEL description="Reference image: Claude Code as an unattended agent with claude-agent"
-LABEL org.opencontainers.image.source="https://github.com/crunchtools/claude-agent"
-LABEL org.opencontainers.image.description="Reference image: Claude Code as an unattended agent with claude-agent"
+LABEL description="Reference image: Claude Code as an unattended agent with claude-supervisor"
+LABEL org.opencontainers.image.source="https://github.com/crunchtools/claude-supervisor"
+LABEL org.opencontainers.image.description="Reference image: Claude Code as an unattended agent with claude-supervisor"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Anthropic's signed repository for claude-code, and crunchtools' for
-# claude-agent. Repository definitions and keys are the kind of configuration
+# claude-supervisor. Repository definitions and keys are the kind of configuration
 # an image may carry (constitution XIV).
 COPY rpms/ /tmp/rpms/
 RUN printf '%s\n' '[claude-code]' 'name=Claude Code' \
@@ -29,17 +29,17 @@ RUN printf '%s\n' '[claude-code]' 'name=Claude Code' \
     else \
         curl -fsSL -o /etc/yum.repos.d/crunchtools.repo \
             https://crunchtools.github.io/packages/rpm/crunchtools.repo && \
-        dnf install -y --nodocs --setopt=install_weak_deps=0 claude-agent; \
+        dnf install -y --nodocs --setopt=install_weak_deps=0 claude-supervisor; \
     fi && \
     dnf clean all && rm -rf /tmp/rpms && \
-    claude --version && claude-agent --version
+    claude --version && claude-supervisor --version
 
 RUN useradd --uid 1000 --user-group --create-home --home-dir /home/agent agent
 
 # Every Claude Code session in this container is the agent's.
-ENV CLAUDE_AGENT=1 \
+ENV CLAUDE_SUPERVISOR=1 \
     DISABLE_AUTOUPDATER=1
 
 USER 1000
 WORKDIR /home/agent
-CMD ["claude-agent", "status"]
+CMD ["claude-supervisor", "status"]

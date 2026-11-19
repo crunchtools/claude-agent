@@ -4,7 +4,7 @@
 # lockfile naming mypy and pytest the gate exits 2 (python-sdlc,
 # need_lock_dep) rather than reporting a pass it never ran.
 [project]
-name = "claude-agent"
+name = "claude-supervisor"
 version = "0"
 # >=3.10, not >=3.9, and this constrains NOTHING about what the packages
 # support: this [project] table exists only so `uv lock` can pin the gate's own
@@ -40,7 +40,7 @@ max-complexity = 10
 
 # The shipped code, by path -- not a package -- and its tests.
 [tool.mypy]
-files = ["root/usr/libexec/claude-agent", "tests"]
+files = ["root/usr/libexec/claude-supervisor", "tests"]
 
 # unittest tests; pytest collects and runs them.
 [tool.pytest.ini_options]
@@ -62,10 +62,10 @@ checks = ["tmux-image", "tmux-tests"]
 kind = "image-build"
 containerfile = "tests/tmux/Containerfile"
 context = "tests/tmux"
-tag = "localhost/claude-agent-tmux:sdlc"
+tag = "localhost/claude-supervisor-tmux:sdlc"
 
 [tool.sdlc.ci.tmux-tests]
 kind = "pytest-in-image"
-image = "localhost/claude-agent-tmux:sdlc"
+image = "localhost/claude-supervisor-tmux:sdlc"
 tests = ["tests/test_supervisor.py", "tests/test_cli.py"]
 mounts = ["tests", "root"]

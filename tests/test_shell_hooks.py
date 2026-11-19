@@ -10,7 +10,7 @@ import unittest
 from collections.abc import Mapping
 from pathlib import Path
 
-LIBEXEC = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-agent"
+LIBEXEC = Path(__file__).resolve().parent.parent / "root/usr/libexec/claude-supervisor"
 
 
 def run(script: str, event: Mapping[str, object], **env: str) -> dict[str, object] | None:
@@ -29,7 +29,7 @@ def run(script: str, event: Mapping[str, object], **env: str) -> dict[str, objec
 
 
 # An agent session with prompts off.
-ON = {"CLAUDE_AGENT": "1", "CLAUDE_AGENT_ANSWER_PERMISSIONS": "1"}
+ON = {"CLAUDE_SUPERVISOR": "1", "CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS": "1"}
 
 
 class AllowHookTest(unittest.TestCase):
@@ -53,9 +53,15 @@ class AllowHookTest(unittest.TestCase):
                 self.assertEqual(decision["hookEventName"], "PermissionRequest")
                 self.assertEqual(decision["decision"], {"behavior": "allow"})
 
+    def test_takes_the_old_names(self) -> None:
+        old = {"CLAUDE_AGENT": "1", "CLAUDE_AGENT_ANSWER_PERMISSIONS": "1"}
+        decision = run("allow-hook.sh", {"tool_name": "Bash", "permission_mode": "default"}, **old)
+        assert decision is not None
+        self.assertEqual(decision["permissionDecision"], "allow")
+
     def test_answers_nothing_outside_an_agent(self) -> None:
         event = {"tool_name": "Bash", "permission_mode": "default"}
-        self.assertIsNone(run("allow-hook.sh", event, CLAUDE_AGENT_ANSWER_PERMISSIONS="1"))
+        self.assertIsNone(run("allow-hook.sh", event, CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS="1"))
 
     def test_permission_request_answered_only_when_turned_on(self) -> None:
         event = {"hook_event_name": "PermissionRequest", "tool_name": "Write", "permission_mode": "default"}
@@ -71,7 +77,7 @@ class AllowHookTest(unittest.TestCase):
                         "permission_mode": "plan",
                         "session_id": "s1",
                     }
-                    self.assertIsNone(run("allow-hook.sh", event, **ON, CLAUDE_AGENT_AUDIT_DIR=audit))
+                    self.assertIsNone(run("allow-hook.sh", event, **ON, CLAUDE_SUPERVISOR_AUDIT_DIR=audit))
             lines = (Path(audit) / "allow-hook.jsonl").read_text().splitlines()
             self.assertEqual(
                 [(json.loads(line)["event"], json.loads(line)["left_to_person"]) for line in lines],

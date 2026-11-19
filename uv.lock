@@ -71,7 +71,7 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-agent"
+name = "claude-supervisor"
 version = "0"
 source = { virtual = "." }
 

@@ -29,16 +29,16 @@ jobs:
       - name: Read the version
         id: version
         run: |
-          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' root/usr/bin/claude-agent)
+          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' root/usr/bin/claude-supervisor)
           if [ "$GITHUB_EVENT_NAME" = release ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::release tag $GITHUB_REF_NAME does not match claude-agent VERSION $version"
+            echo "::error::release tag $GITHUB_REF_NAME does not match claude-supervisor VERSION $version"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Stage the trees
         run: |
-          for package in all claude-agent claude-agent-matrix claude-agent-trentina; do
+          for package in all claude-supervisor claude-supervisor-matrix claude-supervisor-trentina; do
             packaging/stage.sh "$package" "stage/$package"
           done
           # Artifacts drop file modes; a tarball keeps them.
@@ -68,14 +68,14 @@ jobs:
           mkdir stage
           tar -C stage -xzf stage.tar.gz
           rpmbuild -bb --define "pkg_version $VERSION" --define "stage $PWD/stage/all" \
-            --define "_rpmdir $PWD/out" packaging/claude-agent.spec
+            --define "_rpmdir $PWD/out" packaging/claude-supervisor.spec
           mv out/noarch/*.rpm .
-          for rpm in ./claude-agent*.rpm; do rpm -qpl --requires "$rpm"; done
+          for rpm in ./claude-supervisor*.rpm; do rpm -qpl --requires "$rpm"; done
 
       - uses: actions/upload-artifact@v7
         with:
           name: rpm
-          path: claude-agent*.rpm
+          path: claude-supervisor*.rpm
 
   deb:
     needs: stage
@@ -94,7 +94,7 @@ jobs:
         run: |
           mkdir stage
           tar -C stage -xzf stage.tar.gz
-          for package in claude-agent claude-agent-matrix claude-agent-trentina; do
+          for package in claude-supervisor claude-supervisor-matrix claude-supervisor-trentina; do
             pkg="stage/$package"
             mkdir -p "$pkg/DEBIAN"
             install -Dm0644 LICENSE "$pkg/usr/share/doc/$package/copyright"
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: deb
-          path: claude-agent*.deb
+          path: claude-supervisor*.deb
 
   smoke:
     needs: [stage, rpm, deb]
@@ -148,37 +148,43 @@ jobs:
             echo "deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main" \
               > /etc/apt/sources.list.d/claude-code.list
             apt-get update
-            apt-get install -y ./claude-agent_*.deb ./claude-agent-matrix_*.deb ./claude-agent-trentina_*.deb
+            apt-get install -y ./claude-supervisor_*.deb ./claude-supervisor-matrix_*.deb ./claude-supervisor-trentina_*.deb
           else
             printf '%s\n' '[claude-code]' 'name=Claude Code' \
               'baseurl=https://downloads.claude.ai/claude-code/rpm/stable' \
               'enabled=1' 'gpgcheck=1' 'gpgkey=https://downloads.claude.ai/keys/claude-code.asc' \
               > /etc/yum.repos.d/claude-code.repo
-            dnf install -y ./claude-agent-*.rpm
+            dnf install -y ./claude-supervisor-*.rpm
           fi
 
-      - name: Run claude-agent
+      - name: Run claude-supervisor
         run: |
-          test "$(claude-agent --version)" = "claude-agent $VERSION"
-          CLAUDE_AGENT=1 claude-agent status
+          test "$(claude-supervisor --version)" = "claude-supervisor $VERSION"
+          # The 1.x command and environment names, kept until 3.0.0.
+          test "$(claude-agent --version)" = "claude-supervisor $VERSION"
+          CLAUDE_AGENT=1 claude-agent status 2>&1 | grep -q 'CLAUDE_AGENT is deprecated'
+          event='{"session_id":"old","tool_name":"Bash","tool_input":{"command":"ls"}}'
+          echo "$event" | CLAUDE_AGENT=1 CLAUDE_AGENT_ANSWER_PERMISSIONS=1 \
+            /usr/libexec/claude-supervisor/allow-hook.sh | grep -q '"permissionDecision":"allow"'
+          CLAUDE_SUPERVISOR=1 claude-supervisor status
           # The breaker trips on the sixth identical call, as installed.
           event='{"session_id":"smoke","tool_name":"Bash","tool_input":{"command":"ls"}}'
-          export CLAUDE_AGENT=1 CLAUDE_AGENT_BREAKER_DIR=/tmp/breaker CLAUDE_AGENT_AUDIT_DIR=/tmp/audit
+          export CLAUDE_SUPERVISOR=1 CLAUDE_SUPERVISOR_BREAKER_DIR=/tmp/breaker CLAUDE_SUPERVISOR_AUDIT_DIR=/tmp/audit
           for _ in 1 2 3 4 5; do
-            test -z "$(echo "$event" | /usr/libexec/claude-agent/hooks.py breaker)"
+            test -z "$(echo "$event" | /usr/libexec/claude-supervisor/hooks.py breaker)"
           done
-          echo "$event" | /usr/libexec/claude-agent/hooks.py breaker | grep -q '"permissionDecision": "deny"'
+          echo "$event" | /usr/libexec/claude-supervisor/hooks.py breaker | grep -q '"permissionDecision": "deny"'
           grep -q breaker_tripped /tmp/audit/audit-*.jsonl
           # Audit writes a line per call.
-          echo "$event" | /usr/libexec/claude-agent/hooks.py audit
+          echo "$event" | /usr/libexec/claude-supervisor/hooks.py audit
           test "$(grep -c '"tool":"Bash"' /tmp/audit/audit-*.jsonl)" -ge 2
           # Prompts off answers only when asked to.
-          test -z "$(echo "$event" | /usr/libexec/claude-agent/allow-hook.sh)"
-          echo "$event" | CLAUDE_AGENT_ANSWER_PERMISSIONS=1 /usr/libexec/claude-agent/allow-hook.sh |
+          test -z "$(echo "$event" | /usr/libexec/claude-supervisor/allow-hook.sh)"
+          echo "$event" | CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS=1 /usr/libexec/claude-supervisor/allow-hook.sh |
             grep -q '"permissionDecision":"allow"'
           # The memory guard refuses a write into Claude Code's file memory.
           echo '{"tool_name":"Write","tool_input":{"file_path":"/home/a/.claude/projects/p/memory/x.md"}}' |
-            /usr/libexec/claude-agent/deny-local-memory.sh | grep -q '"permissionDecision":"deny"'
+            /usr/libexec/claude-supervisor/deny-local-memory.sh | grep -q '"permissionDecision":"deny"'
 
   image:
     needs: rpm
@@ -193,8 +199,8 @@ jobs:
 
       - name: Build the reference image from these packages
         run: |
-          podman build -t localhost/claude-agent-reference .
-          podman run --rm localhost/claude-agent-reference
+          podman build -t localhost/claude-supervisor-reference .
+          podman run --rm localhost/claude-supervisor-reference
 
   examples:
     runs-on: ubuntu-latest
@@ -205,18 +211,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The examples name claude-supervisor, which the published repositories
+      # carry from 2.0.0 on; until that release reaches them there is nothing
+      # under the name to install. crunchtools/packages publishes rpm and deb
+      # from the same release, so the deb index answers for both. A probe that
+      # cannot reach the index fails, rather than skipping. Goes in 3.0.0.
+      - name: Is claude-supervisor published yet?
+        id: published
+        run: |
+          index=$(curl -fsSL https://crunchtools.github.io/packages/deb/Packages)
+          if grep -qx 'Package: claude-supervisor' <<<"$index"; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::claude-supervisor is not published yet; the examples build once 2.0.0 is"
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # The examples install from the published repositories, as a user's
       # build does; the smoke job covers the packages built here.
       - name: Build examples/Containerfile.${{ matrix.example }}
+        if: steps.published.outputs.yes == 'true'
         run: |
           podman build -f examples/Containerfile.${{ matrix.example }} -t localhost/example .
-          podman run --rm localhost/example claude-agent status
+          podman run --rm localhost/example claude-supervisor status
 
       - name: Check the Quadlet unit
         if: matrix.example == 'ubi'
         run: |
           mkdir -p ~/.config/containers/systemd
-          cp examples/claude-agent.container ~/.config/containers/systemd/
+          cp examples/claude-supervisor.container ~/.config/containers/systemd/
           /usr/libexec/podman/quadlet -dryrun -user
 
   attach:
@@ -235,6 +258,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum claude-agent*.rpm claude-agent*.deb > SHA256SUMS
-          gh release upload "$GITHUB_REF_NAME" claude-agent*.rpm claude-agent*.deb SHA256SUMS \
+          sha256sum claude-supervisor*.rpm claude-supervisor*.deb > SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" claude-supervisor*.rpm claude-supervisor*.deb SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber

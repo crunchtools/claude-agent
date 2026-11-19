@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent / "root"
 FRAGMENTS = ROOT / "etc/claude-code/managed-settings.d"
-LIBEXEC = "/usr/libexec/claude-agent/"
+LIBEXEC = "/usr/libexec/claude-supervisor/"
 
 
 def load(name: str) -> dict:
@@ -26,7 +26,7 @@ def commands(settings: dict, event: str) -> dict[str, str]:
 
 class CoreFragmentTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.settings = load("10-claude-agent.json")
+        self.settings = load("10-claude-supervisor.json")
 
     def test_breaker_and_audit_run_on_every_tool_call(self) -> None:
         self.assertEqual(commands(self.settings, "PreToolUse")[LIBEXEC + "hooks.py breaker"], "")
@@ -53,13 +53,13 @@ class CoreFragmentTest(unittest.TestCase):
     def test_core_sets_no_machine_wide_policy(self) -> None:
         # Installed on a workstation, the core package must leave the
         # person's own Claude Code alone: its hooks are gated on
-        # CLAUDE_AGENT=1, and it carries no policy keys at all.
+        # CLAUDE_SUPERVISOR=1, and it carries no policy keys at all.
         self.assertEqual(set(self.settings), {"hooks"})
 
 
 class TrentinaFragmentTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.settings = load("20-claude-agent-trentina.json")
+        self.settings = load("20-claude-supervisor-trentina.json")
 
     def test_the_gateway_is_the_only_mcp_server(self) -> None:
         self.assertEqual(self.settings["allowedMcpServers"], [{"serverName": "trentina"}])

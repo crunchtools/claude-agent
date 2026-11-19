@@ -3,14 +3,14 @@
 
     supervisor.py [claude arguments...]
 
-With tmux installed, Claude Code runs in tmux session CLAUDE_AGENT_TMUX_SESSION
-(default claude-agent) on a tmux server of its own, socket name
-CLAUDE_AGENT_TMUX_SOCKET (default claude-agent), which a person reaches with
-`claude-agent attach` at their own terminal's size. Without it, Claude Code
+With tmux installed, Claude Code runs in tmux session CLAUDE_SUPERVISOR_TMUX_SESSION
+(default claude-supervisor) on a tmux server of its own, socket name
+CLAUDE_SUPERVISOR_TMUX_SOCKET (default claude-supervisor), which a person reaches with
+`claude-supervisor attach` at their own terminal's size. Without it, Claude Code
 runs in a pseudo-terminal of fixed size that the socket relays.
-CLAUDE_AGENT_TERMINAL=tmux or pty chooses. Everything else talks to this
-process over a unix socket (CLAUDE_AGENT_SOCKET, under
-CLAUDE_AGENT_RUNTIME_DIR), one JSON object per line:
+CLAUDE_SUPERVISOR_TERMINAL=tmux or pty chooses. Everything else talks to this
+process over a unix socket (CLAUDE_SUPERVISOR_SOCKET, under
+CLAUDE_SUPERVISOR_RUNTIME_DIR), one JSON object per line:
 
     {"op": "event", ...}            a hook event, from hooks.py event
     {"op": "submit", "text": ...}   a prompt; held until the session is idle
@@ -28,7 +28,7 @@ one into an open dialog would answer it. The screen is read in two places
 only, both narrow: the startup warnings, and the confirmation a built-in
 command may open.
 
-Exits with Claude Code's status. With CLAUDE_AGENT_RESPAWN=N it instead starts
+Exits with Claude Code's status. With CLAUDE_SUPERVISOR_RESPAWN=N it instead starts
 Claude Code again N seconds after it exits, in the same terminal, and keeps
 the socket: the bridge and anyone attached stay where they are.
 """
@@ -76,7 +76,7 @@ SETTLE_SECONDS = 1.0
 SUBMIT_DELAY_SECONDS = 0.3
 CONFIRM_WINDOW_SECONDS = 3.0
 STOP_SETTLE_SECONDS = 1.0
-# The shortest CLAUDE_AGENT_RESPAWN. A key timed for a Claude Code -- a paste's
+# The shortest CLAUDE_SUPERVISOR_RESPAWN. A key timed for a Claude Code -- a paste's
 # Enter, a stop's Escape, up to about STOP_SETTLE_SECONDS after it was asked
 # for -- must not outlive it into the next, which in tmux has the same pane.
 RESPAWN_FLOOR_SECONDS = 2.0
@@ -143,32 +143,52 @@ FROM_CLIENT = "1"
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>]")
 CONFIRM = re.compile(r"Enter to confirm|❯\s*1\.")
 OUTPUT = re.compile(r"<local-command-(stdout|stderr)>(.*?)</local-command-\1>", re.S)
+# The environment prefix, and the 1.x one read in its place (adopt_old_names).
+PREFIX, OLD_PREFIX = "CLAUDE_SUPERVISOR", "CLAUDE_AGENT"
 
 
 def log(message: str) -> None:
-    print(f"claude-agent: {message}", file=sys.stderr, flush=True)
+    print(f"claude-supervisor: {message}", file=sys.stderr, flush=True)
+
+
+def adopt_old_names(warn: bool = True) -> None:
+    """Take the 1.x settings, CLAUDE_AGENT and CLAUDE_AGENT_*, under their new names.
+
+    One release of grace for deployments written against claude-agent: an old
+    name stands in for its CLAUDE_SUPERVISOR counterpart when that is unset,
+    and a new name that is set wins. Everything started from here inherits
+    both. Goes in 3.0.0.
+    """
+    for old, value in sorted(os.environ.items()):
+        if old != OLD_PREFIX and not old.startswith(OLD_PREFIX + "_"):
+            continue
+        new = PREFIX + old[len(OLD_PREFIX) :]
+        if new not in os.environ:
+            os.environ[new] = value
+            if warn:
+                log(f"{old} is deprecated and goes in 3.0.0; set {new}")
 
 
 def socket_path() -> Path:
-    """CLAUDE_AGENT_SOCKET, else control.sock in the runtime directory."""
+    """CLAUDE_SUPERVISOR_SOCKET, else control.sock in the runtime directory."""
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     default = (
         Path(runtime) / "claude-agent"
         if runtime
         else Path(tempfile.gettempdir()) / f"claude-agent-{os.getuid()}"
     )
-    directory = Path(os.environ.get("CLAUDE_AGENT_RUNTIME_DIR") or default)
-    return Path(os.environ.get("CLAUDE_AGENT_SOCKET") or directory / "control.sock")
+    directory = Path(os.environ.get("CLAUDE_SUPERVISOR_RUNTIME_DIR") or default)
+    return Path(os.environ.get("CLAUDE_SUPERVISOR_SOCKET") or directory / "control.sock")
 
 
 def tmux_session() -> str:
-    """The tmux session Claude Code runs in: CLAUDE_AGENT_TMUX_SESSION, else claude-agent."""
-    return os.environ.get("CLAUDE_AGENT_TMUX_SESSION") or SESSION
+    """The tmux session Claude Code runs in: CLAUDE_SUPERVISOR_TMUX_SESSION, else claude-agent."""
+    return os.environ.get("CLAUDE_SUPERVISOR_TMUX_SESSION") or SESSION
 
 
 def tmux_socket() -> str:
-    """The tmux server's socket name: CLAUDE_AGENT_TMUX_SOCKET, else claude-agent."""
-    return os.environ.get("CLAUDE_AGENT_TMUX_SOCKET") or TMUX_SOCKET
+    """The tmux server's socket name: CLAUDE_SUPERVISOR_TMUX_SOCKET, else claude-agent."""
+    return os.environ.get("CLAUDE_SUPERVISOR_TMUX_SOCKET") or TMUX_SOCKET
 
 
 def literal(text: str) -> str:
@@ -526,7 +546,7 @@ class Tmux:
         """
         too_old = tmux_too_old()
         if too_old:
-            return f"{too_old}; install a newer tmux or set CLAUDE_AGENT_TERMINAL=pty"
+            return f"{too_old}; install a newer tmux or set CLAUDE_SUPERVISOR_TERMINAL=pty"
         target = f"={self.session}:"
         if tmux("has-session", "-t", target).returncode != 0:
             return ""
@@ -540,7 +560,7 @@ class Tmux:
                 return ""
         return (
             f"tmux session {self.session} already exists; "
-            "end it or set CLAUDE_AGENT_TMUX_SESSION to another name"
+            "end it or set CLAUDE_SUPERVISOR_TMUX_SESSION to another name"
         )
 
     def start(self, argv: list[str], env: dict[str, str]) -> bool:
@@ -811,12 +831,12 @@ class Pty:
 
 
 def terminal(selector: selectors.BaseSelector, on_output: Callable[[bytes], None]) -> Tmux | Pty:
-    """CLAUDE_AGENT_TERMINAL, else tmux when one new enough is installed, else a pty.
+    """CLAUDE_SUPERVISOR_TERMINAL, else tmux when one new enough is installed, else a pty.
 
     A tmux too old that was asked for is refused at start (Tmux.taken); one
     that is merely installed is passed over.
     """
-    choice = os.environ.get("CLAUDE_AGENT_TERMINAL")
+    choice = os.environ.get("CLAUDE_SUPERVISOR_TERMINAL")
     if not choice and shutil.which("tmux"):
         too_old = tmux_too_old()
         if too_old:
@@ -845,16 +865,16 @@ class Supervisor:
         # Startup notices, replayed to each subscriber: one may connect later.
         self.notices: list[dict] = []
         self.buffers: dict[socket.socket, bytes] = {}
-        timeout = float(os.environ.get("CLAUDE_AGENT_RESULT_TIMEOUT", RESULT_TIMEOUT_SECONDS))
+        timeout = float(os.environ.get("CLAUDE_SUPERVISOR_RESULT_TIMEOUT", RESULT_TIMEOUT_SECONDS))
         self.results = Results(self.on_result, timeout)
         self.enter_due = 0.0
         self.term = terminal(self.selector, self.on_output)
         self.alive = False
         self.stopping = False
-        respawn = os.environ.get("CLAUDE_AGENT_RESPAWN", "")
+        respawn = os.environ.get("CLAUDE_SUPERVISOR_RESPAWN", "")
         self.respawn = float(respawn) if respawn else None
         if self.respawn is not None and self.respawn < RESPAWN_FLOOR_SECONDS:
-            log(f"CLAUDE_AGENT_RESPAWN={respawn} is below the floor; waiting {RESPAWN_FLOOR_SECONDS:g}s")
+            log(f"CLAUDE_SUPERVISOR_RESPAWN={respawn} is below the floor; waiting {RESPAWN_FLOOR_SECONDS:g}s")
             self.respawn = RESPAWN_FLOOR_SECONDS
         self.next_screen_poll = 0.0
         self.status: int | None = None
@@ -865,7 +885,7 @@ class Supervisor:
 
     def spawn(self) -> bool:
         self.starts += 1
-        env = {"CLAUDE_AGENT": "1", "CLAUDE_AGENT_SOCKET": str(self.sock)}
+        env = {"CLAUDE_SUPERVISOR": "1", "CLAUDE_SUPERVISOR_SOCKET": str(self.sock)}
         self.alive = self.term.start(self.argv, env)
         return self.alive
 
@@ -909,7 +929,7 @@ class Supervisor:
     def startup_dialogs(self, text: str) -> None:
         if "trust" in text and "folder" in text and "trust" not in self.answered:
             self.answered.add("trust")
-            log("the working directory is not trusted yet; answer once with: claude-agent attach --rw")
+            log("the working directory is not trusted yet; answer once with: claude-supervisor attach --rw")
             notice = {"event": "notice", "text": "The working directory is not trusted yet."}
             self.notices.append(notice)
             self.emit(notice)
@@ -952,7 +972,7 @@ class Supervisor:
         self.startup_timeout()
 
     def startup_timeout(self) -> None:
-        quiet = float(os.environ.get("CLAUDE_AGENT_STARTUP_QUIET", 60))
+        quiet = float(os.environ.get("CLAUDE_SUPERVISOR_STARTUP_QUIET", 60))
         self.later(quiet, self.this_start(lambda: self.idle() if self.state == "starting" else None))
 
     def this_start(
@@ -1278,12 +1298,13 @@ class Supervisor:
 
 
 def main(argv: list[str]) -> int:
-    claude = os.environ.get("CLAUDE_AGENT_CLAUDE", "claude")
+    adopt_old_names()
+    claude = os.environ.get("CLAUDE_SUPERVISOR_CLAUDE", "claude")
     sock = socket_path()
     if len(os.fsencode(sock)) > MAX_SOCKET_PATH:
         log(
             f"the socket path {sock} is longer than a unix socket allows ({MAX_SOCKET_PATH} bytes); "
-            "set CLAUDE_AGENT_RUNTIME_DIR to a shorter directory"
+            "set CLAUDE_SUPERVISOR_RUNTIME_DIR to a shorter directory"
         )
         return 1
     supervisor = Supervisor([claude, *argv[1:]], sock)

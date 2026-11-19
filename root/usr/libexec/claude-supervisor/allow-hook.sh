@@ -1,8 +1,8 @@
 #!/bin/bash
 # PreToolUse and PermissionRequest. Answer the permission question so nobody
-# is asked, for an agent (CLAUDE_AGENT=1) whose deployment takes the
+# is asked, for an agent (CLAUDE_SUPERVISOR=1) whose deployment takes the
 # constitution's prompts-off deviation and sets
-# CLAUDE_AGENT_ANSWER_PERMISSIONS=1. A server can start sessions with prompts
+# CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS=1. A server can start sessions with prompts
 # off, but the app sets its own mode on each session it opens; a hook answers
 # whatever mode that is. Without both variables it answers nothing.
 #
@@ -18,14 +18,17 @@
 # be explained. A deny from any other hook or rule still wins.
 set -euo pipefail
 event=$(cat)
-[ "${CLAUDE_AGENT:-}" = 1 ] && [ "${CLAUDE_AGENT_ANSWER_PERMISSIONS:-}" = 1 ] || exit 0
+# CLAUDE_AGENT*, the 1.x names, stand in where the new ones are unset. Goes in 3.0.0.
+supervisor=${CLAUDE_SUPERVISOR:-${CLAUDE_AGENT:-}}
+answer=${CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS:-${CLAUDE_AGENT_ANSWER_PERMISSIONS:-}}
+[ "$supervisor" = 1 ] && [ "$answer" = 1 ] || exit 0
 {
   read -r tool
   read -r hook_event
 } < <(jq -r '(.tool_name // ""), (.hook_event_name // "PreToolUse")' <<<"$event")
 case "$tool" in
   AskUserQuestion | ExitPlanMode)
-    audit_dir=${CLAUDE_AGENT_AUDIT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-agent/audit}
+    audit_dir=${CLAUDE_SUPERVISOR_AUDIT_DIR:-${CLAUDE_AGENT_AUDIT_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-agent/audit}}
     if mkdir -p "$audit_dir" 2>/dev/null; then
       jq -c '{timestamp: (now | todate), hook: "allow", event: (.hook_event_name // "PreToolUse"), left_to_person: .tool_name, mode: .permission_mode, conversation_id: .session_id}' \
         <<<"$event" >>"$audit_dir/allow-hook.jsonl" ||

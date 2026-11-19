@@ -1,12 +1,12 @@
-# claude-agent Constitution
+# claude-supervisor Constitution
 
-> **Version:** 1.1.0
+> **Version:** 1.2.0
 > **Ratified:** 2026-10-21
 > **Status:** Active
 > **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.46.0
 > **Profile:** Autonomous Agent
 
-claude-agent is the runtime an autonomous Claude Code agent is built from,
+claude-supervisor is the runtime an autonomous Claude Code agent is built from,
 shipped as RPM and deb packages: the controls the Autonomous Agent profile
 asks of a deployment, packaged once so every agent image installs the same
 ones. A deployment (crunchtools/josui is the first) adds its identity, its
@@ -22,18 +22,18 @@ The runtime does not draw the boundary; the deployment does (container
 mounts, network, gateway). What the runtime guarantees is that its controls
 cannot be switched off from inside a session: they are managed settings under
 `/etc/claude-code/managed-settings.d/`, which no user, project or session
-setting overrides, and with `claude-agent-trentina` installed only managed
+setting overrides, and with `claude-supervisor-trentina` installed only managed
 hooks run.
 
 ## Layer 1 — Trust Boundary Architecture
 
-Provided by the deployment. `claude-agent-trentina` denies `WebFetch` and
+Provided by the deployment. `claude-supervisor-trentina` denies `WebFetch` and
 `WebSearch`, so untrusted web content reaches the agent only through the
 gateway's judged tools.
 
 ## Layer 2 — MCP Server Governance
 
-`claude-agent-trentina` allows one MCP server, `trentina`, and turns off
+`claude-supervisor-trentina` allows one MCP server, `trentina`, and turns off
 claude.ai connectors. The core package sets no MCP policy.
 
 ## Layer 3 — Container & Supply Chain Security
@@ -48,31 +48,31 @@ CI builds each from the published repositories on every change.
 
 ## Layer 4 — Runtime Security & Behavioral Controls
 
-`hooks.py breaker` denies a conversation after `CLAUDE_AGENT_MAX_TOOL_CALLS`
-(default 500) calls or `CLAUDE_AGENT_MAX_REPEAT` (default 5) identical calls
+`hooks.py breaker` denies a conversation after `CLAUDE_SUPERVISOR_MAX_TOOL_CALLS`
+(default 500) calls or `CLAUDE_SUPERVISOR_MAX_REPEAT` (default 5) identical calls
 in a row, stays tripped, and fails closed. `allow-hook.sh` answers permission
-prompts only with `CLAUDE_AGENT_ANSWER_PERMISSIONS=1`, and never a question to
+prompts only with `CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS=1`, and never a question to
 the person or plan approval.
 
-**Gate:** every hook in the core `claude-agent` package does nothing unless
-`CLAUDE_AGENT=1`. Managed settings reach every session on the machine;
+**Gate:** every hook in the core `claude-supervisor` package does nothing unless
+`CLAUDE_SUPERVISOR=1`. Managed settings reach every session on the machine;
 installing the core package must not change a person's interactive Claude
 Code. Policy that applies machine-wide, the memory guard included, lives only
-in `claude-agent-trentina`, whose description says so.
+in `claude-supervisor-trentina`, whose description says so.
 
 ## Layer 5 — Credential & Identity Management
 
 The core runtime holds no credentials. The Matrix bridge holds one: the
 access token of the agent's own Matrix user, read from a file the deployment
-supplies (`CLAUDE_AGENT_MATRIX_TOKEN_FILE`), never from the image or the
+supplies (`CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE`), never from the image or the
 environment. The audit record redacts secrets by key name and by token
 pattern before writing.
 
 ## Layer 6 — Monitoring, Detection & Response
 
 `hooks.py audit` writes one JSON line per tool call to
-`CLAUDE_AGENT_AUDIT_DIR`, with the profile's fields, and deletes files older
-than `CLAUDE_AGENT_AUDIT_RETENTION_DAYS` (default 120) once a day. Shipping
+`CLAUDE_SUPERVISOR_AUDIT_DIR`, with the profile's fields, and deletes files older
+than `CLAUDE_SUPERVISOR_AUDIT_RETENTION_DAYS` (default 120) once a day. Shipping
 the log off the host is the deployment's.
 
 ## Text Path Contract
@@ -100,3 +100,10 @@ the log off the host is the deployment's.
   (hooks included); no two packages write one file.
 - The smoke test installs the packages next to Anthropic's `claude-code` on
   every target distro, Hummingbird included, and runs the installed hooks.
+- A rename keeps the old name working for one major release: the packages
+  provide and obsolete (deb: provide, replace and break) the old ones, the old
+  command is a symlink, and the old environment names are read, with a warning,
+  where the new ones are unset. Names other programs find at run time -- the
+  tmux server and session, the state and runtime directories -- change only in
+  the major release that drops the aliases. (claude-agent became
+  claude-supervisor in 2.0.0; the aliases go in 3.0.0.)
