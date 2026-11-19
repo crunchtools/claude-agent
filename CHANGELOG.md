@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+The next release is 2.0.0: the command and environment names change (#35).
+
+### Changed
+- claude-agent is now claude-supervisor, named for what it does next to the
+  `claude` image (crunchtools/developer#41). The packages are
+  `claude-supervisor`, `claude-supervisor-matrix` and
+  `claude-supervisor-trentina`; the command is `claude-supervisor`; the
+  hooks live in `/usr/libexec/claude-supervisor`; the managed-settings
+  fragments are `10-claude-supervisor.json` and
+  `20-claude-supervisor-trentina.json`; the settings are `CLAUDE_SUPERVISOR`
+  and `CLAUDE_SUPERVISOR_*`. A fragment edited in place under its old name is
+  saved as `.rpmsave` by the upgrade, not carried over.
+
+### Deprecated
+- The 1.x names, kept through 2.x and dropped in 3.0.0. Each package provides
+  and obsoletes its `claude-agent` counterpart (deb: `Provides`, `Replaces`,
+  `Breaks`), so an upgrade replaces it. `claude-agent` is a symlink to
+  `claude-supervisor`. `CLAUDE_AGENT` and `CLAUDE_AGENT_*` are read where the
+  new names are unset; the CLI, the supervisor and the bridge warn once for
+  each, the hooks silently.
+- The tmux server and session (`tmux -L claude-agent`, session
+  `claude-agent`), the tmux owner option and the state and runtime
+  directories keep their `claude-agent` names through 2.x, so tools that
+  address the pane -- Josui Prime's `/clear` guard and login relay among
+  them -- keep working unchanged. They are renamed in 3.0.0.
+
 ### Fixed
 - The `discarded_errors` exception on `hooks.py` now names its finding by
   item and line (`exc`, 153) rather than by the log text `could not tighten`,

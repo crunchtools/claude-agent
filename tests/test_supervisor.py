@@ -21,7 +21,7 @@ from typing import Any, Callable
 from unittest import mock
 
 TOP = Path(__file__).resolve().parent.parent
-SUPERVISOR = TOP / "root/usr/libexec/claude-agent/supervisor.py"
+SUPERVISOR = TOP / "root/usr/libexec/claude-supervisor/supervisor.py"
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 # The tmux cases need tmux; CI runs them in an image that has it
 # (pyproject.toml, [tool.sdlc.ci]), and everywhere else they are skipped.
@@ -93,16 +93,16 @@ class SupervisorTest(unittest.TestCase):
         """A supervisor in the last one's directory, on its tmux server."""
         env = {
             **tmux_env(self.dir / "tmux"),
-            "CLAUDE_AGENT_TERMINAL": self.TERMINAL,
-            "CLAUDE_AGENT_CLAUDE": str(FAKE),
-            "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run"),
+            "CLAUDE_SUPERVISOR_TERMINAL": self.TERMINAL,
+            "CLAUDE_SUPERVISOR_CLAUDE": str(FAKE),
+            "CLAUDE_SUPERVISOR_RUNTIME_DIR": str(self.dir / "run"),
             "FAKE_CLAUDE_DIR": str(self.dir),
-            "CLAUDE_AGENT_STARTUP_QUIET": "20",
-            "CLAUDE_AGENT_RESULT_TIMEOUT": "5",
+            "CLAUDE_SUPERVISOR_STARTUP_QUIET": "20",
+            "CLAUDE_SUPERVISOR_RESULT_TIMEOUT": "5",
             "CLAUDECODE": "1",
             **extra,
         }
-        env.pop("CLAUDE_AGENT_SOCKET", None)
+        env.pop("CLAUDE_SUPERVISOR_SOCKET", None)
         self.proc = subprocess.Popen(
             [sys.executable, str(SUPERVISOR), *args],
             env=env,
@@ -337,7 +337,7 @@ class TmuxSupervisorTest(SupervisorTest):
         work = self.dir / "d#(touch C1)#{pane_id}"
         work.mkdir()
         name = "c#(touch S1)#{session_id}"
-        self.launch(cwd=str(work), CLAUDE_AGENT_TMUX_SESSION=name)
+        self.launch(cwd=str(work), CLAUDE_SUPERVISOR_TMUX_SESSION=name)
         self.assertEqual(json.loads((self.dir / "env.json").read_text())["cwd"], str(work))
         listed = self.tmux("list-sessions", "-F", "#{session_name}")
         self.assertEqual(listed.stdout.split("\n")[0], name)
@@ -345,7 +345,7 @@ class TmuxSupervisorTest(SupervisorTest):
         self.assertEqual([p.name for p in self.dir.rglob("*1") if p.name in ("C1", "S1")], [])
 
     def test_an_existing_session_is_not_taken_over(self) -> None:
-        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}
+        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_SUPERVISOR_RUNTIME_DIR": str(self.dir / "run2")}
         second = subprocess.run(
             [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
         )
@@ -369,7 +369,7 @@ class TmuxSupervisorTest(SupervisorTest):
         # Someone else's, or one a 1.1 supervisor left: it may be anything.
         self.stop()
         self.tmux("new-session", "-d", "-s", "claude-agent", "sleep 600")
-        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_AGENT_RUNTIME_DIR": str(self.dir / "run2")}
+        env = {**tmux_env(self.dir / "tmux"), "CLAUDE_SUPERVISOR_RUNTIME_DIR": str(self.dir / "run2")}
         second = subprocess.run(
             [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
         )
@@ -406,14 +406,14 @@ class TmuxSupervisorTest(SupervisorTest):
 
 
 class RespawnTest(unittest.TestCase):
-    """CLAUDE_AGENT_RESPAWN: Claude Code is started again and the socket stays."""
+    """CLAUDE_SUPERVISOR_RESPAWN: Claude Code is started again and the socket stays."""
 
     CASE = SupervisorTest
 
     def setUp(self) -> None:
         self.case = self.CASE("test_exits_with_claudes_status")
         self.addCleanup(self.case.doCleanups)
-        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="2")
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_SUPERVISOR_RESPAWN="2")
 
     def again(self) -> None:
         seen = self.case.events.until("idle")
@@ -478,7 +478,7 @@ class TmuxRespawnTest(RespawnTest):
         )
         (Path(stub.name) / "tmux").chmod(0o755)
         path = f"{stub.name}:{os.environ['PATH']}"
-        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_AGENT_RESPAWN="2", PATH=path)
+        self.case.launch("--permission-mode", "bypassPermissions", CLAUDE_SUPERVISOR_RESPAWN="2", PATH=path)
         self.case.request(op="submit", text="exit")
         self.case.events.until("exited")
         down.touch()
@@ -518,7 +518,7 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(case.events.until("reply")[-1]["text"], "echo: hello")
 
     def test_the_bypass_warning_is_left_alone_when_not_asked_for(self) -> None:
-        case = self.start(FAKE_CLAUDE_BYPASS_WARNING="1", CLAUDE_AGENT_STARTUP_QUIET="2")
+        case = self.start(FAKE_CLAUDE_BYPASS_WARNING="1", CLAUDE_SUPERVISOR_STARTUP_QUIET="2")
         # The first Enter typed takes the warning's default, "No, exit".
         case.request(op="submit", text="hello")
         self.assertEqual(case.events.until("exited")[-1]["status"], 1)
@@ -533,7 +533,7 @@ class TerminalTest(unittest.TestCase):
     """tmux when it is installed, a pty when it is not, either when asked for."""
 
     def choose(self, path: str, asked: str = "") -> str:
-        with mock.patch.dict(os.environ, {"PATH": path, "CLAUDE_AGENT_TERMINAL": asked}):
+        with mock.patch.dict(os.environ, {"PATH": path, "CLAUDE_SUPERVISOR_TERMINAL": asked}):
             module = runpy.run_path(str(SUPERVISOR))
             return type(module["terminal"](None, print)).__name__
 
@@ -657,7 +657,7 @@ class TerminalTest(unittest.TestCase):
         for line in (
             "%begin 1700000000 10 0",  # its own attach
             "%end 1700000000 10 0",
-            "%session-changed $0 claude-agent",
+            "%session-changed $0 claude-supervisor",
             "%begin 1700000000 12 1",
             "%end 1700000000 99 1",  # on the screen, not tmux's
             "%end 1700000000 12",
@@ -697,14 +697,14 @@ class TerminalTest(unittest.TestCase):
             self.assertEqual((control.pending, waiting_to_write()), (b"", False))
 
     def supervisor(self, **env: str) -> Any:
-        with mock.patch.dict(os.environ, {"CLAUDE_AGENT_TERMINAL": "pty", **env}):
+        with mock.patch.dict(os.environ, {"CLAUDE_SUPERVISOR_TERMINAL": "pty", **env}):
             return runpy.run_path(str(SUPERVISOR))["Supervisor"](["claude"], Path("/nonexistent"))
 
     def test_a_startup_timer_that_outlives_its_claude_does_nothing(self) -> None:
         # Claude Code exits early in its startup and the respawn delay outlasts
         # the rest of its timers: they must not call a dead terminal idle, where
         # a held prompt would be pasted and lost.
-        supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60", CLAUDE_AGENT_STARTUP_QUIET="60")
+        supervisor = self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="60", CLAUDE_SUPERVISOR_STARTUP_QUIET="60")
         supervisor.alive = True
         supervisor.startup_timeout()
         supervisor.on_session_start({})
@@ -729,7 +729,7 @@ class TerminalTest(unittest.TestCase):
     def test_a_stop_with_no_claude_ready_holds_its_text_for_the_next(self) -> None:
         # Sent in the respawn gap, or while a Claude Code is still starting.
         for exits in (True, False):
-            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="30")
+            supervisor = self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="30")
             supervisor.alive = True
             supervisor.term = mock.Mock()
             with mock.patch.object(supervisor, "emit"):
@@ -750,7 +750,7 @@ class TerminalTest(unittest.TestCase):
 
     def test_the_bypass_answer_goes_only_to_the_claude_that_asked(self) -> None:
         for exits in (False, True):
-            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")
+            supervisor = self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="60")
             supervisor.argv.extend(["--permission-mode", "bypassPermissions"])
             supervisor.alive = True
             with mock.patch.object(supervisor, "emit"), mock.patch.object(supervisor, "write") as write:
@@ -766,16 +766,16 @@ class TerminalTest(unittest.TestCase):
         # Below it, a key timed for the Claude Code that ended could reach the
         # next one: respawn-pane reuses the pane.
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="0.5")
+            supervisor = self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="0.5")
         self.assertEqual(supervisor.respawn, 2.0)
-        self.assertIn("CLAUDE_AGENT_RESPAWN", err.getvalue())
-        self.assertEqual(self.supervisor(CLAUDE_AGENT_RESPAWN="7").respawn, 7.0)
+        self.assertIn("CLAUDE_SUPERVISOR_RESPAWN", err.getvalue())
+        self.assertEqual(self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="7").respawn, 7.0)
 
     def keys_after(
         self, act: Callable[[Any], None], ends: bool, state: str = "idle"
     ) -> tuple[Any, list[bytes]]:
         """The keys typed by act and every timer it set, Claude Code ending (or not) between."""
-        supervisor = self.supervisor(CLAUDE_AGENT_RESPAWN="60")
+        supervisor = self.supervisor(CLAUDE_SUPERVISOR_RESPAWN="60")
         supervisor.alive, supervisor.state = True, state
         supervisor.term = mock.Mock()
         with mock.patch.object(supervisor, "emit"):
@@ -819,9 +819,9 @@ class TerminalTest(unittest.TestCase):
             env = {
                 **tmux_env(Path(tmp)),
                 "PATH": "/nonexistent",
-                "CLAUDE_AGENT_TERMINAL": "tmux",
-                "CLAUDE_AGENT_CLAUDE": str(FAKE),
-                "CLAUDE_AGENT_RUNTIME_DIR": f"{tmp}/run",
+                "CLAUDE_SUPERVISOR_TERMINAL": "tmux",
+                "CLAUDE_SUPERVISOR_CLAUDE": str(FAKE),
+                "CLAUDE_SUPERVISOR_RUNTIME_DIR": f"{tmp}/run",
             }
             ended = subprocess.run(
                 [sys.executable, str(SUPERVISOR)], env=env, capture_output=True, text=True, timeout=30
@@ -927,6 +927,35 @@ class SendTest(unittest.TestCase):
 
     def test_a_full_buffer_drops_it(self) -> None:
         self.check(takes=None, dropped=True)
+
+
+class OldNamesTest(unittest.TestCase):
+    """CLAUDE_AGENT and CLAUDE_AGENT_*, the 1.x names, until 3.0.0."""
+
+    def test_old_names_fill_in_and_new_ones_win(self) -> None:
+        env = {
+            "CLAUDE_AGENT": "1",
+            "CLAUDE_AGENT_RESPAWN": "5",
+            "CLAUDE_AGENT_SOCKET": "/old.sock",
+            "CLAUDE_SUPERVISOR_SOCKET": "/new.sock",
+        }
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stderr(io.StringIO()) as err:
+            runpy.run_path(str(SUPERVISOR))["adopt_old_names"]()
+            taken = {
+                k: os.environ[k]
+                for k in ("CLAUDE_SUPERVISOR", "CLAUDE_SUPERVISOR_RESPAWN", "CLAUDE_SUPERVISOR_SOCKET")
+            }
+            expected = {
+                "CLAUDE_SUPERVISOR": "1",
+                "CLAUDE_SUPERVISOR_RESPAWN": "5",
+                "CLAUDE_SUPERVISOR_SOCKET": "/new.sock",
+            }
+            self.assertEqual(taken, expected)
+        warned = err.getvalue()
+        self.assertIn(
+            "CLAUDE_AGENT_RESPAWN is deprecated and goes in 3.0.0; set CLAUDE_SUPERVISOR_RESPAWN", warned
+        )
+        self.assertNotIn("CLAUDE_AGENT_SOCKET", warned)
 
 
 if __name__ == "__main__":
