@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `sdlc ci` now builds, smokes and scans the reference image from the root
+  Containerfile (`stacks = ["container"]`), and `[tool.sdlc.image] publish =
+  false` keeps it unpublished, ready for the fleet `ci.yml` (sdlc 0.15).
 - Gatehouse triage gets `review_result` from the review job, so a pull request
   whose review died before posting anything is held instead of passing.
 
