@@ -69,3 +69,6 @@ kind = "pytest-in-image"
 image = "localhost/claude-agent-tmux:sdlc"
 tests = ["tests/test_supervisor.py", "tests/test_cli.py"]
 mounts = ["tests", "root"]
+
+[tool.sdlc]
+repo-kinds = ["autonomous-agent"]
