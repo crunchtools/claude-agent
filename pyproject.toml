@@ -58,6 +58,12 @@ skip = ["semgrep"]
 [tool.sdlc.ci]
 checks = ["tmux-image", "tmux-tests"]
 
+# The reference image's own run: `claude-agent status` exits 0 in the image
+# built from the root Containerfile, or the build is broken. A hard gate, as
+# packages.yml's `podman run --rm` of it was, not the default advisory one.
+[tool.sdlc.ci.container-smoke]
+gate = true
+
 [tool.sdlc.ci.tmux-image]
 kind = "image-build"
 containerfile = "tests/tmux/Containerfile"
@@ -72,3 +78,12 @@ mounts = ["tests", "root"]
 
 [tool.sdlc]
 repo-kinds = ["autonomous-agent"]
+# The root Containerfile is the reference image. A python repo runs the python
+# stack alone unless it names more, so without this nothing builds, smokes or
+# scans it in `sdlc ci`.
+stacks = ["container"]
+
+# A reference image, not one crunchtools publishes: `sdlc ci` builds, smokes and
+# scans it on every check event, and nothing pushes, promotes or polls its parent.
+[tool.sdlc.image]
+publish = false
