@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-The next release is 2.0.0: the command and environment names change (#35).
+## [2.0.0] - 2026-11-27
+
+The command and environment names change (#35).
 
 ### Changed
 - claude-agent is now claude-supervisor, named for what it does next to the
