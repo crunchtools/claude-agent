@@ -1,16 +1,19 @@
-Package: claude-agent
+Package: claude-supervisor
 Version: @VERSION@-1
 Architecture: all
 Maintainer: crunchtools <scott.mccarty@crunchtools.com>
 Depends: claude-code, python3 (>= 3.9), bash, jq
 Recommends: tmux (>= 3.2)
+Provides: claude-agent (= @VERSION@-1)
+Replaces: claude-agent (<< @VERSION@-1)
+Breaks: claude-agent (<< @VERSION@-1)
 Section: admin
 Priority: optional
-Homepage: https://github.com/crunchtools/claude-agent
+Homepage: https://github.com/crunchtools/claude-supervisor
 Description: run Claude Code as an unattended agent
- claude-agent run holds an interactive session in tmux or a pty and takes prompts
+ claude-supervisor run holds an interactive session in tmux or a pty and takes prompts
  over a local socket, holding them while a turn runs. It ships the hooks an
  unattended Claude Code session needs:
  circuit breakers that halt a conversation that has run away, an audit
  record of every tool call, and an opt-in hook that answers permission
- prompts. The hooks act only in sessions started with CLAUDE_AGENT=1.
+ prompts. The hooks act only in sessions started with CLAUDE_SUPERVISOR=1.

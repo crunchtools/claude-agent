@@ -1,4 +1,4 @@
-# An agent image on Debian 13: Claude Code plus claude-agent.
+# An agent image on Debian 13: Claude Code plus claude-supervisor.
 #   podman build -f Containerfile.debian -t my-agent .
 FROM docker.io/library/debian:13
 
@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     curl -fsSL -o /etc/apt/keyrings/crunchtools.asc https://crunchtools.github.io/packages/crunchtools.asc && \
     curl -fsSL -o /etc/apt/sources.list.d/crunchtools.sources \
         https://crunchtools.github.io/packages/deb/crunchtools.sources && \
-    apt-get update && apt-get install -y --no-install-recommends claude-agent claude-agent-matrix && \
+    apt-get update && apt-get install -y --no-install-recommends claude-supervisor claude-supervisor-matrix && \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 1000 --create-home agent
-ENV CLAUDE_AGENT=1
+ENV CLAUDE_SUPERVISOR=1
 USER 1000
 WORKDIR /home/agent
-CMD ["claude-agent", "run"]
+CMD ["claude-supervisor", "run"]

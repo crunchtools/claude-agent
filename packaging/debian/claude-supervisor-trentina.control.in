@@ -1,12 +1,15 @@
-Package: claude-agent-trentina
+Package: claude-supervisor-trentina
 Version: @VERSION@-1
 Architecture: all
 Maintainer: crunchtools <scott.mccarty@crunchtools.com>
-Depends: claude-agent (= @VERSION@-1)
+Depends: claude-supervisor (= @VERSION@-1)
+Provides: claude-agent-trentina (= @VERSION@-1)
+Replaces: claude-agent-trentina (<< @VERSION@-1)
+Breaks: claude-agent-trentina (<< @VERSION@-1)
 Section: admin
 Priority: optional
-Homepage: https://github.com/crunchtools/claude-agent
-Description: crunchtools agent policy for claude-agent
+Homepage: https://github.com/crunchtools/claude-supervisor
+Description: crunchtools agent policy for claude-supervisor
  The Trentina gateway is the only MCP server, claude.ai connectors and web
  tools are off, only managed hooks run, and Claude Code's local file memory
  stays empty. It applies to every Claude Code session on the machine.

@@ -3,20 +3,20 @@
 
 [[exceptions]]
 check = "CH009-random_scripts"
-path = "root/usr/libexec/claude-agent/hooks.py"
+path = "root/usr/libexec/claude-supervisor/hooks.py"
 justification = "root/ is the package install tree (packaging/files.txt maps each file to its package), so a file's path here is its install path. hooks.py is the breaker and audit hook that the managed-settings fragment runs on every tool call, installed under libexec because nothing calls it by hand. Documented in docs/controls.md; covered by tests/test_hooks.py."
 classification = "by_design"
 
 [[exceptions]]
 check = "CH009-random_scripts"
-path = "root/usr/libexec/claude-agent/allow-hook.sh"
-justification = "Installed by the claude-agent package as the prompts-off hook that the managed-settings fragment runs on PreToolUse and PermissionRequest. Documented in docs/controls.md; covered by tests/test_shell_hooks.py."
+path = "root/usr/libexec/claude-supervisor/allow-hook.sh"
+justification = "Installed by the claude-supervisor package as the prompts-off hook that the managed-settings fragment runs on PreToolUse and PermissionRequest. Documented in docs/controls.md; covered by tests/test_shell_hooks.py."
 classification = "by_design"
 
 [[exceptions]]
 check = "CH009-random_scripts"
-path = "root/usr/libexec/claude-agent/deny-local-memory.sh"
-justification = "Installed by the claude-agent-trentina package as the PreToolUse hook that keeps Claude Code's file-based memory empty. Documented in docs/policy.md; covered by tests/test_shell_hooks.py."
+path = "root/usr/libexec/claude-supervisor/deny-local-memory.sh"
+justification = "Installed by the claude-supervisor-trentina package as the PreToolUse hook that keeps Claude Code's file-based memory empty. Documented in docs/policy.md; covered by tests/test_shell_hooks.py."
 classification = "by_design"
 
 [[exceptions]]
@@ -27,32 +27,32 @@ classification = "by_design"
 
 [[exceptions]]
 check = "EV013-hidden_env_config"
-path = "root/usr/libexec/claude-agent/hooks.py"
-justification = "CLAUDE_AGENT, CLAUDE_AGENT_AUDIT_DIR and CLAUDE_AGENT_BREAKER_DIR are the hooks' documented interface, listed with their defaults in docs/hooks.md and the module docstring. A hook receives nothing from Claude Code but the event on stdin and its command line, which is fixed in managed settings, so the environment is the only per-deployment channel."
+path = "root/usr/libexec/claude-supervisor/hooks.py"
+justification = "CLAUDE_SUPERVISOR, CLAUDE_SUPERVISOR_AUDIT_DIR and CLAUDE_SUPERVISOR_BREAKER_DIR are the hooks' documented interface, listed with their defaults in docs/hooks.md and the module docstring. A hook receives nothing from Claude Code but the event on stdin and its command line, which is fixed in managed settings, so the environment is the only per-deployment channel."
 classification = "by_design"
 
 [[exceptions]]
 check = "CH009-random_scripts"
-path = "root/usr/libexec/claude-agent/supervisor.py"
-justification = "Installed by the claude-agent package; `claude-agent run` starts it to hold the session. It lives under libexec because nothing runs it by hand. Documented in docs/supervisor.md; covered by tests/test_supervisor.py."
+path = "root/usr/libexec/claude-supervisor/supervisor.py"
+justification = "Installed by the claude-supervisor package; `claude-supervisor run` starts it to hold the session. It lives under libexec because nothing runs it by hand. Documented in docs/supervisor.md; covered by tests/test_supervisor.py."
 classification = "by_design"
 
 [[exceptions]]
 check = "CH009-random_scripts"
-path = "root/usr/libexec/claude-agent/matrix-bridge.py"
-justification = "Installed by the claude-agent-matrix package; `claude-agent run` starts it when a homeserver is configured. Documented in docs/matrix.md; covered by tests/test_matrix_bridge.py."
+path = "root/usr/libexec/claude-supervisor/matrix-bridge.py"
+justification = "Installed by the claude-supervisor-matrix package; `claude-supervisor run` starts it when a homeserver is configured. Documented in docs/matrix.md; covered by tests/test_matrix_bridge.py."
 classification = "by_design"
 
 [[exceptions]]
 check = "EV013-hidden_env_config"
-path = "root/usr/libexec/claude-agent/supervisor.py"
-justification = "CLAUDE_AGENT_RUNTIME_DIR, CLAUDE_AGENT_SOCKET, CLAUDE_AGENT_CLAUDE, CLAUDE_AGENT_STARTUP_QUIET and CLAUDE_AGENT_RESULT_TIMEOUT are the supervisor's documented configuration, listed with defaults in docs/supervisor.md. It runs as a service under a unit or a container entrypoint, where the environment is the configuration channel."
+path = "root/usr/libexec/claude-supervisor/supervisor.py"
+justification = "CLAUDE_SUPERVISOR_RUNTIME_DIR, CLAUDE_SUPERVISOR_SOCKET, CLAUDE_SUPERVISOR_CLAUDE, CLAUDE_SUPERVISOR_STARTUP_QUIET and CLAUDE_SUPERVISOR_RESULT_TIMEOUT are the supervisor's documented configuration, listed with defaults in docs/supervisor.md. It runs as a service under a unit or a container entrypoint, where the environment is the configuration channel."
 classification = "by_design"
 
 [[exceptions]]
 check = "EV013-hidden_env_config"
-path = "root/usr/libexec/claude-agent/matrix-bridge.py"
-justification = "The CLAUDE_AGENT_MATRIX_* variables, CLAUDE_AGENT_SOCKET and CLAUDE_AGENT_RUNTIME_DIR are the bridge's documented configuration, listed in docs/matrix.md; `claude-agent run` passes them through from the service's environment."
+path = "root/usr/libexec/claude-supervisor/matrix-bridge.py"
+justification = "The CLAUDE_SUPERVISOR_MATRIX_* variables, CLAUDE_SUPERVISOR_SOCKET and CLAUDE_SUPERVISOR_RUNTIME_DIR are the bridge's documented configuration, listed in docs/matrix.md; `claude-supervisor run` passes them through from the service's environment."
 classification = "by_design"
 
 [[exceptions]]
@@ -63,7 +63,7 @@ classification = "by_design"
 
 [[exceptions]]
 check = "CH024-print_only_server_logging"
-path = "root/usr/libexec/claude-agent/hooks.py"
+path = "root/usr/libexec/claude-supervisor/hooks.py"
 justification = "A hook is a short-lived command, not a server: Claude Code shows its stderr and decides what to do from its exit code and stdout. Usage, a breaker failure and a missed supervisor event are each one line to stderr; a logging framework would add configuration with nothing to configure."
 classification = "by_design"
 
@@ -90,7 +90,7 @@ classification = "by_design"
 # third option here that is better than this one.
 [[exceptions]]
 check = "EV004-redundant_error_handling"
-path = "root/usr/libexec/claude-agent/hooks.py"
+path = "root/usr/libexec/claude-supervisor/hooks.py"
 pattern = "could not tighten"
 justification = "Reporting and continuing is the correct behaviour on the audit write path: raising would lose an audit record over a permission bit, and swallowing would hide a security property we failed to set. The handler prints to stderr, which is how this module already reports the breaker and event failures below it."
 classification = "by_design"
@@ -104,8 +104,8 @@ classification = "by_design"
 # Gatehouse found on this pull request.
 [[exceptions]]
 check = "EV009-discarded_errors"
-path = "root/usr/libexec/claude-agent/hooks.py"
+path = "root/usr/libexec/claude-supervisor/hooks.py"
 item = "exc"
-line = 153
+line = 164
 justification = "The caught exception IS used, in the f-string one line below, inside a `with contextlib.suppress(OSError)` block that the check does not descend into. The suppression is required: print() to a closed stderr raises BrokenPipeError, an OSError, which would otherwise escape this handler and break the audit write."
 classification = "gourmand_bug"

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Carry a Matrix DM to an agent's session and its answers back.
 
-`claude-agent run` starts this beside the supervisor when
-CLAUDE_AGENT_MATRIX_HOMESERVER is set. It long-polls /sync as the agent's
+`claude-supervisor run` starts this beside the supervisor when
+CLAUDE_SUPERVISOR_MATRIX_HOMESERVER is set. It long-polls /sync as the agent's
 own Matrix user and turns each text from an allowed sender
-(CLAUDE_AGENT_MATRIX_ALLOW, checked on the sender, never the room) into a
+(CLAUDE_SUPERVISOR_MATRIX_ALLOW, checked on the sender, never the room) into a
 request to the supervisor:
 
     !anything          refused: a typed ! would run a shell command
@@ -38,14 +38,15 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-# The supervisor beside this file says where its socket is.
-socket_path = runpy.run_path(str(Path(__file__).resolve().parent / "supervisor.py"))["socket_path"]
+# The supervisor beside this file says where its socket is, and which old names it still takes.
+_supervisor = runpy.run_path(str(Path(__file__).resolve().parent / "supervisor.py"))
+socket_path, adopt_old_names = _supervisor["socket_path"], _supervisor["adopt_old_names"]
 SYNC_TIMEOUT_MS = 30000
 REQUEST_TIMEOUT_SECONDS = 30
 RETRY_SECONDS = 5
 # The bridge names itself. urllib's default, Python-urllib/3.x, is a banned
 # signature behind Cloudflare (error 1010), which refuses every call.
-USER_AGENT = "claude-agent-matrix"
+USER_AGENT = "claude-supervisor-matrix"
 TYPING_TIMEOUT_MS = 30000
 TYPING_REFRESH_SECONDS = 20
 TYPING_IDLE_SECONDS = 180
@@ -401,10 +402,11 @@ def plaintext_off_host(url: str) -> bool:
 
 
 def main() -> int:
+    adopt_old_names()
     env = os.environ
     try:
-        homeserver = env["CLAUDE_AGENT_MATRIX_HOMESERVER"]
-        token = Path(env["CLAUDE_AGENT_MATRIX_TOKEN_FILE"]).read_text().strip()
+        homeserver = env["CLAUDE_SUPERVISOR_MATRIX_HOMESERVER"]
+        token = Path(env["CLAUDE_SUPERVISOR_MATRIX_TOKEN_FILE"]).read_text().strip()
     except (KeyError, OSError) as exc:
         log(f"not configured: {exc}")
         return 1
@@ -414,11 +416,13 @@ def main() -> int:
             "network unencrypted. Use https, or a homeserver on a private network."
         )
         return 1
-    allow = {mxid.strip() for mxid in env.get("CLAUDE_AGENT_MATRIX_ALLOW", "").split(",") if mxid.strip()}
+    allow = {
+        mxid.strip() for mxid in env.get("CLAUDE_SUPERVISOR_MATRIX_ALLOW", "").split(",") if mxid.strip()
+    }
     if not allow:
-        log("[WARNING] CLAUDE_AGENT_MATRIX_ALLOW is empty. No text will get through.")
+        log("[WARNING] CLAUDE_SUPERVISOR_MATRIX_ALLOW is empty. No text will get through.")
     default_state = Path.home() / ".local/state/claude-agent/matrix-sync"
-    state = Path(env.get("CLAUDE_AGENT_MATRIX_STATE") or default_state)
+    state = Path(env.get("CLAUDE_SUPERVISOR_MATRIX_STATE") or default_state)
     Bridge(Homeserver(homeserver, token), allow, state, Supervisor(socket_path())).run()
     return 0
 

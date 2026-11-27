@@ -1,7 +1,7 @@
 # Controls
 
-The `claude-agent` package installs breaker and audit hooks as managed
-settings, the one layer no session can override. `claude-agent-trentina` adds a
+The `claude-supervisor` package installs breaker and audit hooks as managed
+settings, the one layer no session can override. `claude-supervisor-trentina` adds a
 machine-wide lockdown.
 
 ## Why it matters
@@ -11,13 +11,13 @@ what it did.
 
 ## How it works
 
-- **Gate.** Hooks act only when `CLAUDE_AGENT=1`.
+- **Gate.** Hooks act only when `CLAUDE_SUPERVISOR=1`.
 - **Breaker.** Denies every later call once a conversation passes
-  `CLAUDE_AGENT_MAX_TOOL_CALLS` (500) or repeats one call
-  `CLAUDE_AGENT_MAX_REPEAT` (5) times. It fails closed.
-- **Audit.** One JSON line per call in `CLAUDE_AGENT_AUDIT_DIR`, secrets
+  `CLAUDE_SUPERVISOR_MAX_TOOL_CALLS` (500) or repeats one call
+  `CLAUDE_SUPERVISOR_MAX_REPEAT` (5) times. It fails closed.
+- **Audit.** One JSON line per call in `CLAUDE_SUPERVISOR_AUDIT_DIR`, secrets
   redacted, kept 120 days. A failed write is reported and never blocks.
-- **Prompts off.** With `CLAUDE_AGENT_ANSWER_PERMISSIONS=1`, every permission
+- **Prompts off.** With `CLAUDE_SUPERVISOR_ANSWER_PERMISSIONS=1`, every permission
   prompt is allowed except questions to you and plan approval.
 - **trentina policy** (every session on the machine, so for images only):
 
@@ -32,9 +32,9 @@ what it did.
 ## Example
 
 ```console
-$ export CLAUDE_AGENT=1 CLAUDE_AGENT_MAX_REPEAT=2
+$ export CLAUDE_SUPERVISOR=1 CLAUDE_SUPERVISOR_MAX_REPEAT=2
 $ e='{"session_id":"s","tool_name":"Bash","tool_input":{"command":"ls"}}'
-$ for i in 1 2 3; do echo "$e" | /usr/libexec/claude-agent/hooks.py breaker; done
+$ for i in 1 2 3; do echo "$e" | /usr/libexec/claude-supervisor/hooks.py breaker; done
 {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...
 ```
 
