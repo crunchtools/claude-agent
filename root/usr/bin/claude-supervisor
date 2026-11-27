@@ -36,7 +36,7 @@ import time
 import tty
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "2.0.0"
 MANAGED = Path("/etc/claude-code/managed-settings.d")
 # Installed, this is /usr/libexec/claude-supervisor; in the source tree, root/usr/libexec.
 LIBEXEC = Path(__file__).resolve().parent.parent / "libexec/claude-supervisor"
