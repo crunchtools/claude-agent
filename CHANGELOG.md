@@ -33,11 +33,12 @@ The command and environment names change (#35).
   `claude-supervisor`. `CLAUDE_AGENT` and `CLAUDE_AGENT_*` are read where the
   new names are unset; the CLI, the supervisor and the bridge warn once for
   each, the hooks silently.
-- The tmux server and session (`tmux -L claude-agent`, session
+- The `claude-agent` tmux and directory names, dropped in 3.0.0. Through
+  2.x the tmux server and session (`tmux -L claude-agent`, session
   `claude-agent`), the tmux owner option and the state and runtime
-  directories keep their `claude-agent` names through 2.x, so tools that
-  address the pane -- Josui Prime's `/clear` guard and login relay among
-  them -- keep working unchanged. They are renamed in 3.0.0.
+  directories keep those names, so tools that address the pane -- Josui
+  Prime's `/clear` guard and login relay among them -- keep working
+  unchanged.
 
 ### Fixed
 - The `discarded_errors` exception on `hooks.py` now names its finding by
